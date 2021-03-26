@@ -1,0 +1,84 @@
+\documentclass{article}
+
+\usepackage[margin=1.00in]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+
+
+\newcommand{\dv}{\mathrm{div}\ }
+\newcommand{\curl}{\mathrm{curl}\ }
+\newcommand{\grad}{\triangledown}
+\newcommand{\R}{\mathbb{R}\ }
+
+\begin{document}
+
+\title{Milestone 1}
+\author{Bryn Barker}
+
+\maketitle
+
+\section*{Maxwell's Equations}
+The Maxwell's equations relevant to MHD are given by
+\[\nabla \times \boldsymbol{h} = \mu J,\quad \nabla \cdot J=0,\quad \nabla \times E = -\frac{\partial \boldsymbol{h} }{\partial t},\quad \nabla \cdot \boldsymbol{h} = 0\]
+where \[ J = \sigma (E + \boldsymbol{u}\times \boldsymbol{h}),\quad F = J\times \boldsymbol{h}.\]
+Note the Lorenz force ($F$) is used when coupling this system with Navier-Stokes.
+
+Now we can combine these equations to obtain the following induction equation:
+\[
+    \frac{\partial \boldsymbol{h} }{\partial t} - \nabla \times (\boldsymbol{u}\times \boldsymbol{h}) + \nu \nabla \times (\nabla \times \boldsymbol{h}) = 0.
+\]
+This combined with the divergence condition yields the following system which describes the magnetic flow in MHD.
+\begin{equation}\label{eqn:mag1}
+    \frac{\partial \boldsymbol{h} }{\partial t} - \nabla \times (\boldsymbol{u}\times \boldsymbol{h}) + \nu \nabla \times (\nabla \times \boldsymbol{h}) = 0,
+\end{equation}
+\begin{equation}\label{eqn:mag2}
+    \nabla \cdot \boldsymbol{h} = 0.
+\end{equation}
+
+Now \eqref{eqn:mag1} has the following weak form
+\begin{equation}\label{eqn:mag1weak}
+    (\boldsymbol{v}, \boldsymbol{h}_t)-(\nabla \times \boldsymbol{v},\boldsymbol{u}\times \boldsymbol{h}) + \nu (\nabla \times \boldsymbol{v},\nabla \times \boldsymbol{h}) = 0.
+\end{equation}
+
+Notice that if we include the divergence condition, then our system is overdetermined. In order to get around this, we will introduce a scalar function $q$ into the system as follows. 
+\begin{equation}\label{eqn:mag1}
+    \frac{\partial \boldsymbol{h} }{\partial t} - \nabla \times (\boldsymbol{u}\times \boldsymbol{h}) + \nu \nabla \times (\nabla \times \boldsymbol{h}) + \nabla q= 0,
+\end{equation}
+\begin{equation}\label{eqn:mag2}
+    \nabla \cdot \boldsymbol{h} = 0,
+\end{equation}
+where $q$ satisfies $q = 0$ on the boundary. Taking the divergence of \eqref{eqn:mag1} and applying this boundary condition we get that $q=0$ everywhere on the domain. And thus adding $q$ to our system does not affect the solution but does keep the system from being overdetermined. As a note, $q$ is often interpreted as the Lagrange multiplier used to enforce the divergence free condition. 
+
+Additionally, we would like to add a term to the system that will guarentee consistent splitting, for more of an explanation as to why see [ref thesis or blakebarker paper]. To do this we will introduce a scalar $\beta > 0$ and add a multiple of the divergence of the magnetic field to \eqref{eqn:mag1}. Since the divergence of the magnetic field should be zero, for a smooth solution, this will not affect the system. Our result $\beta$-model of the system is given by:
+\begin{equation}\label{eqn:mag1}
+    \frac{\partial \boldsymbol{h} }{\partial t} - \nabla \times (\boldsymbol{u}\times \boldsymbol{h}) + \nu \nabla \times (\nabla \times \boldsymbol{h}) + \nabla q + \beta (\nabla \cdot \boldsymbol{h})\boldsymbol{e}_1= 0,
+\end{equation}
+\begin{equation}\label{eqn:mag2}
+    \nabla \cdot \boldsymbol{h} = 0,
+\end{equation}
+where $\boldsymbol{e}_1$ is the unit vector given by $\boldsymbol{e}_1 = (1, 0)^\top$. 
+
+Notice that I have not specified the boundary conditions just yet, that is because I am still working with my former advisor to work out what boundary conditions we want for this system, though they will likely be fixed in the first dimension and periodic in the second. 
+
+Implementing this magnetic system is not so difficult in deal.ii since the nedelec element is built in. At the present I am using a backward Euler method for the time derivative
+
+\section*{Compressible Navier-Stokes}
+Okay here is where things get a little more complicated. The compressible Navier-Stokes are non-linear so we will need to use something like Newton-Raphson to solve our system instead of a more simple linear solve that we got away with for Maxwell's equations. This system will also require the use of a preconditioner. The ILUT method for obtaining the preconditioning method has been very effective for NS in the literature and works well with a Newton-GMRES solver. This is likely the approach I will take in building my fluid solver. Though it is possible that alternative preconditioners will need to by tried depending on what issues come up. But beyond this, the time dependent compressible Navier-Stokes is a problem that has been solved many times and is very doable. The main difference in my system will be the additional Lorenz force mentioned previously that comes from the forces appied by the magnetic field. 
+
+\section*{Coupling}
+There are two different classic approaches for coupling these two systems to form compressible MHD. The first is the most intuitive. Which is to solve the magnetic system, update the magnetic field, then solve the fluid system, and update the fluid field in each time step. The issue here is that this method becomes very expensive since the system matrix used to solve the magnetic field relies on the fluid velocity. Note that for the fluid system, the contribution from the magnetic field is completely contained in the force vector so the system matrix does not need to be updated at each time step. 
+
+In an effort to be more computationally efficient, an alternative method is to essentially freeze the magnetic system matrix for multiple time steps. This creates some complications with the magnetic system matrix lagging behind the forcing vector which can be resolved by adding an inner iteration for the magnetic solver. This method is a little less intuitive. So I will start by implementing the first approach. I am hoping to add some parallelization to my code and might be able to get away with the expensive redefinition of the magnetic system matrix at each time step. 
+
+\section*{Notes}
+Here is a list of things that I need to fix in order for my milestone 1 goals to be fully met. I am setting a personal deadline of next thursday for these goals because I forgot about these issues until writing this up. 
+\begin{itemize}
+    \item[-] Try adding periodic boundary conditions to $h_2$.
+    \item[-] Test the induction equation solver using a magentic field that is divergence free.
+    \item[-] Add the beta condition and the "Lagrange multiplier", then solve the full maxwell's system.
+\end{itemize}
+
+
+\end{document}

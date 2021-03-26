@@ -1,0 +1,43 @@
+\documentclass{article}
+
+\usepackage[margin=1.00in]{geometry}
+
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+
+
+\newcommand{\dv}{\mathrm{div}\ }
+\newcommand{\curl}{\mathrm{curl}\ }
+\newcommand{\grad}{\triangledown}
+\newcommand{\R}{\mathbb{R}\ }
+
+\begin{document}
+
+\title{Project Proposal}
+\author{Bryn Barker}
+
+\maketitle
+
+Magnetohydrodynamics (MHD) couples the Navier-Stokes equations for fluid dynamics with Maxwell’s equation of electromagnetism to describe the behavior of conducting fluids, such as plasmas. The main concept behind MHD is that magnetic fields can induce currents in a moving conductive fluid, which in turn create forces on the fluid and affect the magnetic field itself. Research in MHD waves is a driving force in developing an experimental tokamak nuclear fusion reactor which has huge potential impacts in power generation.
+
+In my master's thesis, I did a detailed analytic and numeric study of the stability of MHD waves. Specifically looking at the relationship between viscous and inviscid stability by analytically and numerically computing the Evans function and lopatinski determinant for variants of the system. What this research lacked, was numerical simulation of the MHD system itself. With a numerical simulation for MHD waves, we would be able to visualize stable waves converging to a stable translate after a perturbation is introduced and we would discover how the unstable waves behave. For example, do the unstationary waves evolve to an alternative stationary state? Or just meander through all time? Ideally we would even be able to visualize the corrugation instabilities. 
+
+With this motivation in mind, for my FEA project this semester, I am going to build a finite element solver that can simulate 2D planar MHD waves. I anticipate this solver will be moderately difficult to develop due to the coupling in the MHD system and the complexity of the two individual coupled systems (Maxwell's and Navier-Stokes). Based on what I have read about this modeling problem, I will most likely start by simulating Maxwell's equation and Navier-Stokes separately. This will give insight into what preconditioners, finite elements, and other specifications are required of the two systems which will be useful when I attempt to couple them. 
+
+At a very bare minimum, I want to succesfully use finite element to simulate Maxwell's equation and Navier-Stokes and I want my solvers to use preconditioners since this is something I have never been able to make work before. However if this is all I am able to get done, that will be rather depressing. My real hope is that I will be able to build a solver that simulates the full MHD system for 2D planar waves and that with this solver, I am able to better understand the nature of the waves as discussed above. If I had infinite time, I would like to extend my solver to be more general, namely, to develop a time evolution code using finite elements that treats general conservation laws in two spatial dimensions taking the following form,
+\begin{equation}
+f^0(U)_t+\sum_{k=1}^2 f^k(U)_{x_k}= \sum_{j,k=1}^2\left( B^{jk}(U)U_{x_k}\right)_{x_j}, 
+\notag
+\end{equation}
+where $x = (x_1,x_2)\in \R^2$, $t\in \R$, and $U\in \R^n$ with $f^j:\R^n\to \R^n$, and it is assumed that each $B^{jk}$ has the block structure
+\begin{equation}
+B^{jk}  = \begin{pmatrix}
+0_{r\times r}&0_{r\times (n-r)}\\
+0_{(n-r)\times r}&b^{jk}(U)
+\end{pmatrix}.
+\notag
+\end{equation}
+Even without infinite time, I hope that I will be able to start looking at what creating this more general solver would entail after completing the specific MHD solver. 
+
+\end{document}

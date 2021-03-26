@@ -1,0 +1,94 @@
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{graphicx}
+\usepackage{amssymb}
+\usepackage{epstopdf}
+\usepackage{multirow}
+\usepackage{float}
+\usepackage{algorithm,algorithmic}
+\usepackage{subfig}
+
+
+\newcommand{\dv}{\mathrm{div}\ }
+\newcommand{\curl}{\mathrm{curl}\ }
+\newcommand{\grad}{\triangledown}
+\newcommand{\R}{\mathbb{R}\ }
+
+
+\begin{document}
+
+We develop a time evolution code using finite elements that treats general conservation laws in two spatial dimensions taking the following form,
+\begin{equation}
+f^0(U)_t+\sum_{k=1}^2 f^k(U)_{x_k}= \sum_{j,k=1}^2\left( B^{jk}(U)U_{x_k}\right)_{x_j}, 
+\notag
+\end{equation}
+where $x = (x_1,x_2)\in \R^2$, $t\in \R$, and $U\in \R^n$ with $f^j:\R^n\to \R^n$, and it is assumed that each $B^{jk}$ has the block structure
+\begin{equation}
+B^{jk}  = \begin{pmatrix}
+0_{r\times r}&0_{r\times (n-r)}\\
+0_{(n-r)\times r}&b^{jk}(U)
+\end{pmatrix}.
+\notag
+\end{equation}
+The domain is given by $(t,x_1,x_2)\in [0,T]\times [a,b]\times[c,d]$ where $T>0$, $a<b$, and $c<d$. We allow for periodic boundary conditions in the spatial variables, or general Robin boundary conditions.
+
+\section{1D Time Evolution}
+Consider the PDE
+$$ f^0(U)_t + f^1(U)_x - (B(U)U_x)_x =0$$
+over the domain $\Omega$.
+
+We wish to approximate the solution to this PDE using finite difference in time and finite element in space.
+
+First we substitute in the finite difference approximation of the time derivative, letting $U^n$ correspond to the solution $U$ at time $t= t_n$.
+
+$$ \frac{1}{\Delta t}\left(f^0(U^{n})-f^0(U^{n-1})\right) + f^1(U^n)_x - (B(U^n)U_x^n)_x =0$$
+
+Now we derive the weak form of this system. Let $V = \{v \in C^1(\Omega) : v|_{\partial \Omega} = 0\}$. Then for all $v\in V$ we have:
+
+$$ \frac{1}{\Delta t}\int\left(f^0(U^{n})-f^0(U^{n-1})\right)v + \int f^1(U^n)_x v - \int (B(U^n)U_x^n)_xv =0$$
+
+Now we can apply integration by parts to simiplify our problem to:
+
+$$ \frac{1}{\Delta t}\int f^0(U^{n})v -\frac{1}{\Delta t}\int f^0(U^{n-1})v - \int f^1(U^n) v_x + \int B(U^n)U_x^nv_x  = 0$$
+
+Now we take a finite subspace of our solution space with basis functions $\{\phi_i\}_{i=0}^N$ and we let $v = \sum c_j\phi_j$ and $U^n = \sum A_i^n \phi_i$.
+
+Plugging these approximations back into our weak form we get.
+
+$$ \frac{1}{\Delta t}\int f^0(\sum A_i^n\phi_i)(\sum c_j\phi_j) -\frac{1}{\Delta t}\int f^0(\sum A_i^{n-1}\phi_i)(\sum c_j\phi_j) - \int f^1(\sum A_i^n\phi_i) (\sum c_j\phi_j') + \int B(\sum A_i^n\phi_i)(\sum A_i^n\phi_i')(\sum c_j\phi_j') = 0$$
+
+Which is equivalent to:
+
+$$ \sum c_j \left( \frac{1}{\Delta t}\int f^0(\sum A_i^n\phi_i)\phi_j -\frac{1}{\Delta t}\int f^0(\sum A_i^{n-1}\phi_i)\phi_j - \int f^1(\sum A_i^n\phi_i) \phi_j' + \int B(\sum A_i^n\phi_i)(\sum A_i^n\phi_i')\phi_j'  \right) = 0$$
+
+Now since this must be true for any set $\{c_j\} \subset \mathbb{R}$ it follows that for each j
+
+$$  \frac{1}{\Delta t}\int f^0(\sum A_i^n\phi_i)\phi_j -\frac{1}{\Delta t}\int f^0(\sum A_i^{n-1}\phi_i)\phi_j - \int f^1(\sum A_i^n\phi_i) \phi_j' + \int B(\sum A_i^n\phi_i)(\sum A_i^n\phi_i')\phi_j'  = 0$$
+
+Now we will define
+
+
+$$
+\phi_j(x) = \left\{
+        \begin{array}{ll}
+            (x - x_{j-1})/h & \quad x \in [x_{j-1},x_j] \\
+            (x_{j+1} - x)/h & \quad x \in [x_{j},x_{j+1}] \\
+
+            0 & \quad otherwise
+        \end{array}
+    \right.
+$$
+
+Thus $\phi_j$ is only nonzero on the domain $[x_{j-1},x_{j+1}]$ which corresponds to the elements $e_j$ and $e_{j+1}$. Due to the linearity of the integral we can write our equation equivalently as:
+
+$$ \sum_{k=0}^N \left( \frac{1}{\Delta t}\int_{e_k} f^0(\sum A_i^n\phi_i)\phi_j -\frac{1}{\Delta t}\int_{e_k} f^0(\sum A_i^{n-1}\phi_i)\phi_j - \int_{e_k} f^1(\sum A_i^n\phi_i) \phi_j' + \int_{e_k} B(\sum A_i^n\phi_i)(\sum A_i^n\phi_i')\phi_j'  \right)= 0$$
+
+And then because $\int_{e_k} \phi_j = 0 \quad \forall k \neq j,{j+1}$ this simplifies to
+$$ \sum_{k=j}^{j+1} \left( \frac{1}{\Delta t}\int_{e_k} f^0(\sum A_i^n\phi_i)\phi_j -\frac{1}{\Delta t}\int_{e_k} f^0(\sum A_i^{n-1}\phi_i)\phi_j - \int_{e_k} f^1(\sum A_i^n\phi_i) \phi_j' + \int_{e_k} B(\sum A_i^n\phi_i)(\sum A_i^n\phi_i')\phi_j'  \right)= 0$$
+
+Since we are only looking at the local intervals over each element $e_k$ our approximation for $U$ will now be $U = A_{k-1}\phi_{k-1}+A_k\phi_k$
+While
+
+\end{document}

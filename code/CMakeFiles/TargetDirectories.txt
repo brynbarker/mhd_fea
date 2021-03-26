@@ -1,0 +1,11 @@
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/rebuild_cache.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/edit_cache.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/info.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/strip_comments.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/distclean.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/runclean.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/run.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/release.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/sign.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/debug.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/code/CMakeFiles/maxwell.dir
