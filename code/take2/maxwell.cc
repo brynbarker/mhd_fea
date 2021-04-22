@@ -47,6 +47,9 @@
 #include <fstream>
 #include <cmath>
 
+#include <deal.II/fe/fe_raviart_thomas.h>
+
+
 using namespace dealii;
 
 template <int dim>
@@ -155,8 +158,7 @@ Maxwell<dim>::Maxwell(const unsigned int degree,
     , nu(1.0)
     , beta(1.0)
     , vel_field(velocity_field)
-    , fe(FE_NedelecSZ<dim>(degree+1), dim, FE_Q<dim>(degree), 1)
-    //, fe(FE_NedelecSZ<dim>(degree+1), dim, FE_Q<dim>(degree), 1)
+    , fe(FE_NedelecSZ<dim>(degree+1), 1, FE_Q<dim>(degree), 1)
     , dof_handler(triangulation)
 {}
 
@@ -197,23 +199,29 @@ void Maxwell<dim>::setup_dofs()
     //preconditioner_matrix.clear();
 
     dof_handler.distribute_dofs(fe);
-    DoFRenumbering::Cuthill_McKee(dof_handler);
+
+    //DoFRenumbering::Cuthill_McKee(dof_handler);
 
     // group together the velocity components 
     // separate from the lagrange multiplier
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
-    std::cout << "HERE I AM" << std::endl;
-    std::cout << dof_handler.n_locally_owned_dofs() << std::endl;
 
-    const hp::FECollection<dim, dim> fe_collection(
-      dof_handler.get_fe_collection());
+    //DoFRenumbering::component_wise(dof_handler, block_component);
+    DoFRenumbering::component_wise(dof_handler);
 
+    const hp::FECollection<dim, dim> fe_collection = dof_handler.get_fe_collection();
     std::cout << fe_collection.n_components() << std::endl;
 
-    DoFRenumbering::component_wise(dof_handler, block_component);
-    //DoFRenumbering::component_wise(dof_handler);
-    std::cout << "I made it!" << std::endl;
+    std::vector<types::global_dof_index> dofs_per_component(
+            dim+1, types::global_dof_index(0));
+
+    DoFTools::count_dofs_per_component(dof_handler,
+                                       dofs_per_component, 
+                                       true); // this means there will be no dublicates
+
+    const unsigned int n_h = dofs_per_component[0];
+    const unsigned int n_q = dofs_per_component[dim];
 
     ExactSolution<dim> exact_solution;
     exact_solution.set_time(current_time);
@@ -231,12 +239,11 @@ void Maxwell<dim>::setup_dofs()
 
     //const std::vector<types::global_dof_index> dofs_per_block =
     //  DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
-    std::vector<types::global_dof_index> dofs_per_block;
-    DoFTools::count_dofs_per_block(dof_handler, 
-                                   dofs_per_block,
-                                   block_component);
-    const unsigned int n_h = dofs_per_block[0];
-    const unsigned int n_q = dofs_per_block[1];
+    
+    //std::vector<types::global_dof_index> dofs_per_block;
+    //DoFTools::count_dofs_per_block(dof_handler, 
+    //                               dofs_per_block,
+    //                               block_component);
 
     {
         BlockDynamicSparsityPattern dsp(2, 2);
@@ -349,6 +356,7 @@ void Maxwell<dim>::setup_dofs()
                          QGauss<dim>(fe.degree + 2),
                          exact_solution,
                          current_solution);
+    
 }
 
 template <int dim>
@@ -487,11 +495,14 @@ void Maxwell<dim>::assemble_rhs()
             {
               //phi_i_h = fe_values[h].value(i, q_index);
               //cell_rhs(i) += phi_i_h * rhs_values[q] * fe_values.JxW(q);
-              const unsigned int component_i = 
-                  fe.system_to_component_index(i).first;
-              cell_rhs(i) += fe_values.shape_value(i,q_index) *
-                             forcing_values[q_index](component_i) *
-                             fe_values.JxW(q_index);
+
+              cell_rhs(i) += fe_values.JxW(q_index) *
+                  ( fe_values[h].value(i,q_index)[0] * forcing_values[q_index][0] 
+                  + fe_values[h].value(i,q_index)[1] * forcing_values[q_index][1]
+                  + fe_values[q].value(i,q_index)    * forcing_values[q_index][2] );
+              //cell_rhs(i) += fe_values[h].value(i,q_index) *
+              //               forcing_values[q_index] *
+              //               fe_values.JxW(q_index);
             }
         }
 
@@ -517,6 +528,7 @@ void Maxwell<dim>::run()
 
     assemble_system();
 
+    
     const auto &A = system_matrix.block(0,0);
     const auto &B = system_matrix.block(1,0);
 
@@ -609,8 +621,8 @@ void Maxwell<dim>::run()
 template <int dim>
 void Maxwell<dim>::output_results() const
 {
-    std::vector<std::string> solution_names(dim, "magnetic field");
-    solution_names.emplace_back("lagrange multiplier");
+    std::vector<std::string> solution_names(dim, "magnetic_field");
+    solution_names.emplace_back("lagrange_multiplier");
 
     std::vector<DataComponentInterpretation::DataComponentInterpretation>
         data_component_interpretation(
@@ -665,7 +677,7 @@ main()
   velocity_field[0] = 1.0;
   velocity_field[1] = 1.0;
 
-  for (unsigned int i = 1; i < 5; ++i)
+  for (unsigned int i = 1; i < 3; ++i)
     {
       Maxwell<2> maxwell(degree, i, velocity_field);
       maxwell.run();
