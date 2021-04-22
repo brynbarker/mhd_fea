@@ -1,0 +1,11 @@
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/rebuild_cache.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/edit_cache.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/info.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/strip_comments.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/distclean.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/runclean.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/run.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/release.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/sign.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/debug.dir
+/Users/bryn/BRYN/School/UNC/FiniteElement/project/mhd_fea/code/take2/CMakeFiles/maxwell.dir
