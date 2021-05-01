@@ -44,6 +44,9 @@
 #include <fstream>
 #include <cmath>
 
+// solves dh/dt - curl (u X h) + nu curl ( curl (h) ) + grad q+ beta (div h)e_1 = f
+// div h = 0
+
 using namespace dealii;
 
 template <int dim>
@@ -116,8 +119,28 @@ class ExactSolution : public Function<dim>
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
-            values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
+            int order  = 2;
+
+            if (order == 0)
+            {
+                values(0) = 1.0;
+                values(1) = 1.0;
+            }
+            if (order == 1)
+            {
+                values(0) = -p(1);
+                values(1) = p(0);
+            }
+            if (order == 2)
+            {
+                values(0) = -p(1)*p(1);
+                values(1) = p(0)*p(0);
+            }
+            if (order == 3)
+            {
+                values(0) = time*cos(p(0)*p(1));
+                values(1) = time*sin(p(0)*p(1));
+            }
             values(2) = 0;
         }
 };
@@ -126,8 +149,10 @@ template <int dim>
 class ForcingFunction : public Function<dim>
 {
     public:
-        ForcingFunction()
-            : Function<dim>(dim+1) // 3
+        ForcingFunction(double nu, Tensor<1, dim> &v_field)
+            : Function<dim>(dim+1) 
+            , nu(nu)
+            , v_field(v_field)// 3
         {}
 
         virtual void 
@@ -135,10 +160,33 @@ class ForcingFunction : public Function<dim>
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
-            values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
+            int order  = 2;
+
+            if (order == 0)
+            {
+                values(0) = 0.0;
+                values(1) = 0.0;
+            }
+            if (order == 1)
+            {
+                values(0) = -v_field[1];
+                values(1) = v_field[0];
+            }
+            if (order == 2)
+            {
+                values(0) = 2*(nu-v_field[1]*p(1));
+                values(1) = -2*(nu-v_field[0]*p(0));
+            }
+            if (order == 3)
+            {
+                values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
+                values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
+            }
             values(2) = 0;
         }
+    private:
+        double nu;
+        Tensor<1,dim> &v_field;
 };
 
 template<class MatrixType, class PreconditionerType>
@@ -270,14 +318,29 @@ void Maxwell<dim>::setup_dofs()
     ExactSolution<dim> exact_solution;
     exact_solution.set_time(current_time);
 
-    // FE_Nedelec boundary condition.
-    VectorTools::project_boundary_values_curl_conforming_l2(
-        dof_handler,
-        0,
-        exact_solution,
-        0,
-        constraints,
-        StaticMappingQ1<dim>::mapping);
+
+    {
+      constraints.clear();
+      DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+      
+      // FE_Nedelec boundary condition.
+      VectorTools::project_boundary_values_curl_conforming_l2(
+          dof_handler,
+          0,
+          exact_solution,
+          0,
+          constraints,
+          StaticMappingQ1<dim>::mapping);
+  
+      FEValuesExtractors::Scalar q(dim);
+      //DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+      VectorTools::interpolate_boundary_values(dof_handler,
+                                               0,
+                                               exact_solution,
+                                               constraints,
+                                               fe.component_mask(q));
+    }
+
 
     constraints.close();
 
@@ -430,12 +493,21 @@ void Maxwell<dim>::assemble_system()
     FullMatrix<double> cell_preconditioner_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>     cell_rhs(dofs_per_cell);
 
+    FEValuesViews::Vector<dim> fe_views(fe_values, 0);
+
+
     Tensor<1, dim>              phi_i_h, phi_j_h;
     double                      phi_i_q, phi_j_q;
     double                      curl_phi_i_h, curl_phi_j_h;
     double                      vel_cross_phi_j_h;
     double                      div_phi_i_h, div_phi_j_h;
 
+    double  cross_product;
+    double curl_curl;
+    double curl_cross;
+    double dot_product;
+    double beta_term;
+    Tensor<1, dim>              value_i, value_j;
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -459,6 +531,8 @@ void Maxwell<dim>::assemble_system()
               curl_phi_i_h = fe_values[h].curl(i, q_index)[0];
               div_phi_i_h  = fe_values[h].divergence(i,q_index);
 
+              value_i[0] = fe_values.shape_value_component(i,q_index,0);
+              value_i[1] = fe_values.shape_value_component(i,q_index,1);
 
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
@@ -466,6 +540,9 @@ void Maxwell<dim>::assemble_system()
                   phi_j_q = fe_values[q].value(j, q_index);
                   curl_phi_j_h = fe_values[h].curl(j,q_index)[0];
                   div_phi_j_h  = fe_values[h].divergence(j,q_index);
+
+                  value_j[0] = fe_values.shape_value_component(j,q_index,0);
+                  value_j[1] = fe_values.shape_value_component(j,q_index,1);
 
                   // mass matrix
                   cell_mass_matrix(i, j) +=
@@ -481,12 +558,17 @@ void Maxwell<dim>::assemble_system()
                   vel_cross_phi_j_h = 
                       vel_field[0]*phi_j_h[1] - vel_field[1]*phi_j_h[0];
 
+                  // system matrix
                   cell_system_matrix(i,j) +=
                       ( nu * curl_phi_i_h * curl_phi_j_h -
-                        curl_phi_i_h * vel_cross_phi_j_h + 
-                        beta * phi_i_h[0] * div_phi_j_h - 
+                        curl_phi_i_h * vel_cross_phi_j_h 
+                        + 
+                        beta * phi_i_h[0] * div_phi_j_h 
+                        - 
                         div_phi_i_h * phi_j_q -
-                        phi_i_q * div_phi_j_h ) * fe_values.JxW(q_index);
+                        phi_i_q * div_phi_j_h 
+                        ) * fe_values.JxW(q_index);
+
                 }
             }
         }
@@ -592,7 +674,7 @@ void Maxwell<dim>::run()
 
 
     MappingQGeneric<dim> mapping(1);
-    ForcingFunction<dim> forcing_function;
+    ForcingFunction<dim> forcing_function(nu, vel_field);
     ExactSolution<dim> exact_solution;
 
     for (; current_time <= 1; current_time += time_step, ++time_step_number)
@@ -613,16 +695,30 @@ void Maxwell<dim>::run()
       }
 
       // setup constraints for imposing boundary conditions
-      constraints.clear();
-      exact_solution.set_time(current_time + time_step);
-      // FE_Nedelec boundary condition.
-      VectorTools::project_boundary_values_curl_conforming_l2(
-        dof_handler,
-        0,
-        exact_solution,
-        0,
-        constraints,
-        StaticMappingQ1<dim>::mapping);
+      {
+        constraints.clear();
+        exact_solution.set_time(current_time + time_step);
+        DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+        
+        // FE_Nedelec boundary condition.
+        VectorTools::project_boundary_values_curl_conforming_l2(
+            dof_handler,
+            0,
+            exact_solution,
+            0,
+            constraints,
+            StaticMappingQ1<dim>::mapping);
+    
+        FEValuesExtractors::Scalar q(dim);
+        //DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+        VectorTools::interpolate_boundary_values(dof_handler,
+                                                 0,
+                                                 exact_solution,
+                                                 constraints,
+                                                 fe.component_mask(q));
+      }
+
+
       constraints.close();
 
       // Now we want to set up C^T (b - A k)
@@ -635,6 +731,11 @@ void Maxwell<dim>::run()
 
       const auto &F = system_rhs.block(0);
 
+      SparseDirectUMFPACK lu_solver;
+      lu_solver.factorize(A);
+
+      lu_solver.vmult(current_solution.block(0), F);
+/*
       // compute schur_rhs
       A_inv.vmult(tmp, F);
       B.vmult(schur_rhs, tmp);
@@ -642,15 +743,18 @@ void Maxwell<dim>::run()
       // solve for q
       S_inv.vmult(current_solution.block(1), schur_rhs);
       constraints.distribute(current_solution);
-
+*/
+      // set q = 0
+      current_solution.block(1) = 0;
+/*
       // compute second system rhs
       B_T.vmult(tmp, current_solution.block(1));
       tmp *= -1;
-      tmp += F;
+      tmp += F; 
 
       // solve for h
       A_inv.vmult(current_solution.block(0), tmp);
-
+*/
       constraints.distribute(current_solution);
 
       /*
@@ -701,9 +805,14 @@ void Maxwell<dim>::output_results() const
                                           max_error_per_cell,
                                           QIterated<dim>(QGauss<1>(2), 2),
                                           VectorTools::NormType::Linfty_norm);
-        std::cout << "maximum error = "
+        std::cout << "\t\t\t\tmaximum error = "
                   << *std::max_element(max_error_per_cell.begin(),
                                        max_error_per_cell.end())
+                  << std::endl;
+        std::cout << "\t\t\t\t               ("
+                  << *std::max_element(max_error_per_cell.begin(),
+                                       max_error_per_cell.end())/4
+                  << ")" 
                   << std::endl;
     }
 
@@ -728,13 +837,13 @@ void Maxwell<dim>::output_results() const
 int
 main()
 {
-  int degree = 2;
+  int degree = 1;
 
   Tensor<1, 2> velocity_field;
   velocity_field[0] = 1.0;
   velocity_field[1] = 1.0;
 
-  for (unsigned int i = 1; i < 3; ++i)
+  for (unsigned int i = 0; i < 4; ++i)
     {
       Maxwell<2> maxwell(degree, i, velocity_field);
       maxwell.run();
