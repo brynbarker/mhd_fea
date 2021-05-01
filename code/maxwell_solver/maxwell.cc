@@ -119,7 +119,7 @@ class ExactSolution : public Function<dim>
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            int order  = 2;
+            int order  = 3;
 
             if (order == 0)
             {
@@ -138,8 +138,8 @@ class ExactSolution : public Function<dim>
             }
             if (order == 3)
             {
-                values(0) = time*cos(p(0)*p(1));
-                values(1) = time*sin(p(0)*p(1));
+                values(0) = time*cos(p(1));
+                values(1) = time*sin(p(0));
             }
             values(2) = 0;
         }
@@ -160,7 +160,7 @@ class ForcingFunction : public Function<dim>
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            int order  = 2;
+            int order  = 3;
 
             if (order == 0)
             {
@@ -179,8 +179,8 @@ class ForcingFunction : public Function<dim>
             }
             if (order == 3)
             {
-                values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
-                values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
+                values(0) = cos(p(1))*(nu*time+1)-time*v_field[1]*sin(p(1));
+                values(1) = sin(p(0))*(nu*time+1)+time*v_field[0]*cos(p(0));
             }
             values(2) = 0;
         }
@@ -212,13 +212,13 @@ class InverseMatrix : public Subscriptor
         const SmartPointer<const PreconditionerType> preconditioner;
 };
 
-template<class PreconditionerType>
+template<class InverseType>
 class SchurComplement : public Subscriptor
 {
     public:
         SchurComplement(
                 const BlockSparseMatrix<double> &system_matrix,
-                const InverseMatrix<SparseMatrix<double>, PreconditionerType> &A_inv)
+                const InverseType &A_inv)
             : system_matrix(&system_matrix)
             , A_inv(&A_inv)
             , tmp1(system_matrix.block(0,0).m())
@@ -234,7 +234,7 @@ class SchurComplement : public Subscriptor
 
     private:
         const SmartPointer<const BlockSparseMatrix<double> > system_matrix;
-        const SmartPointer<const InverseMatrix<SparseMatrix<double>, PreconditionerType>> A_inv;
+        const SmartPointer<const InverseType> A_inv;
 
         mutable Vector<double> tmp1, tmp2;
 };
@@ -249,7 +249,7 @@ Maxwell<dim>::Maxwell(const unsigned int degree,
     , current_time(0.0)
     , time_step_number(1)
     , nu(1.0)
-    , beta(1.0)
+    , beta(0.0)
     , vel_field(velocity_field)
     , fe(FE_NedelecSZ<dim>(degree+1), 1, FE_Q<dim>(degree), 1)
     , dof_handler(triangulation)
@@ -343,14 +343,6 @@ void Maxwell<dim>::setup_dofs()
 
 
     constraints.close();
-
-    //const std::vector<types::global_dof_index> dofs_per_block =
-    //  DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
-    
-    //std::vector<types::global_dof_index> dofs_per_block;
-    //DoFTools::count_dofs_per_block(dof_handler, 
-    //                               dofs_per_block,
-    //                               block_component);
 
     {
         BlockDynamicSparsityPattern dsp(2, 2);
@@ -493,21 +485,11 @@ void Maxwell<dim>::assemble_system()
     FullMatrix<double> cell_preconditioner_matrix(dofs_per_cell, dofs_per_cell);
     Vector<double>     cell_rhs(dofs_per_cell);
 
-    FEValuesViews::Vector<dim> fe_views(fe_values, 0);
-
-
     Tensor<1, dim>              phi_i_h, phi_j_h;
     double                      phi_i_q, phi_j_q;
     double                      curl_phi_i_h, curl_phi_j_h;
     double                      vel_cross_phi_j_h;
     double                      div_phi_i_h, div_phi_j_h;
-
-    double  cross_product;
-    double curl_curl;
-    double curl_cross;
-    double dot_product;
-    double beta_term;
-    Tensor<1, dim>              value_i, value_j;
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
@@ -531,18 +513,12 @@ void Maxwell<dim>::assemble_system()
               curl_phi_i_h = fe_values[h].curl(i, q_index)[0];
               div_phi_i_h  = fe_values[h].divergence(i,q_index);
 
-              value_i[0] = fe_values.shape_value_component(i,q_index,0);
-              value_i[1] = fe_values.shape_value_component(i,q_index,1);
-
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
                   phi_j_h = fe_values[h].value(j, q_index);
                   phi_j_q = fe_values[q].value(j, q_index);
                   curl_phi_j_h = fe_values[h].curl(j,q_index)[0];
                   div_phi_j_h  = fe_values[h].divergence(j,q_index);
-
-                  value_j[0] = fe_values.shape_value_component(j,q_index,0);
-                  value_j[1] = fe_values.shape_value_component(j,q_index,1);
 
                   // mass matrix
                   cell_mass_matrix(i, j) +=
@@ -614,6 +590,10 @@ void Maxwell<dim>::run()
     Vector<double> tmp(system_rhs.block(0).size());
     Vector<double> schur_rhs(system_rhs.block(1).size());
 
+    SparseDirectUMFPACK A_inv;
+    A_inv.factorize(A);
+    
+/*
     // inner preconditioning
     PreconditionSSOR<SparseMatrix<double>> preconditioner_A;
     preconditioner_A.initialize(A); 
@@ -622,7 +602,7 @@ void Maxwell<dim>::run()
     InverseMatrix<SparseMatrix<double>,
                         PreconditionSSOR<SparseMatrix<double> > >
               A_inv(A, preconditioner_A);
-
+*/
     PreconditionSSOR<SparseMatrix<double>> preconditioner_M;
     preconditioner_M.initialize(mass_p_matrix); 
 
@@ -632,15 +612,20 @@ void Maxwell<dim>::run()
                   PreconditionSSOR<SparseMatrix<double>> > 
             preconditioner_S(mass_p_matrix, preconditioner_M);
 
-    SchurComplement<PreconditionSSOR<SparseMatrix<double>> > schur_comp(system_matrix, A_inv);
+//  SchurComplement<PreconditionSSOR<SparseMatrix<double>> > schur_comp(system_matrix, A_inv);
+    SchurComplement<SparseDirectUMFPACK> schur_comp(system_matrix, A_inv);
 
     // store schur complement inverse solver
     //InverseSchur<>
-    InverseMatrix<SchurComplement<PreconditionSSOR<SparseMatrix<double>> >,
+//  InverseMatrix<SchurComplement<PreconditionSSOR<SparseMatrix<double>> >,
+//                InverseMatrix<SparseMatrix<double>,
+//                PreconditionSSOR<SparseMatrix<double>> > >
+//            S_inv(schur_comp, preconditioner_S);
+    
+    InverseMatrix<SchurComplement<SparseDirectUMFPACK>,
                   InverseMatrix<SparseMatrix<double>,
                   PreconditionSSOR<SparseMatrix<double>> > >
               S_inv(schur_comp, preconditioner_S);
-    
     /*
     const auto op_A = linear_operator(A);
     const auto op_B = linear_operator(B);
@@ -731,22 +716,20 @@ void Maxwell<dim>::run()
 
       const auto &F = system_rhs.block(0);
 
-      SparseDirectUMFPACK lu_solver;
-      lu_solver.factorize(A);
-
-      lu_solver.vmult(current_solution.block(0), F);
-/*
+      tmp = 0;
       // compute schur_rhs
       A_inv.vmult(tmp, F);
       B.vmult(schur_rhs, tmp);
+      schur_rhs -= system_rhs.block(1);
 
       // solve for q
       S_inv.vmult(current_solution.block(1), schur_rhs);
       constraints.distribute(current_solution);
-*/
+
       // set q = 0
-      current_solution.block(1) = 0;
-/*
+      //current_solution.block(1) = 0;
+
+      tmp = 0;
       // compute second system rhs
       B_T.vmult(tmp, current_solution.block(1));
       tmp *= -1;
@@ -754,7 +737,12 @@ void Maxwell<dim>::run()
 
       // solve for h
       A_inv.vmult(current_solution.block(0), tmp);
-*/
+
+      //SparseDirectUMFPACK lu_solver;
+      //lu_solver.factorize(A);
+
+      //lu_solver.vmult(current_solution.block(0), F);
+
       constraints.distribute(current_solution);
 
       /*
