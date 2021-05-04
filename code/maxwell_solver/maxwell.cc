@@ -101,9 +101,6 @@ class Maxwell
         BlockVector<double> previous_solution;
         BlockVector<double> system_rhs;
         BlockVector<double> load_vector;
-
-        // maybe BlockSchurPreconditioner instead
-        //std::shared_ptr< SparseDirectUMFPACK > A_preconditioner;
 };
 
 template<int dim>
@@ -249,7 +246,7 @@ Maxwell<dim>::Maxwell(const unsigned int degree,
     , current_time(0.0)
     , time_step_number(1)
     , nu(1.0)
-    , beta(0.0)
+    , beta(1.0)
     , vel_field(velocity_field)
     , fe(FE_NedelecSZ<dim>(degree+1), 1, FE_Q<dim>(degree), 1)
     , dof_handler(triangulation)
@@ -274,19 +271,13 @@ Maxwell<dim>::setup_grid()
   //                                    rotation_matrix);
 
   triangulation.refine_global(n_global_refinements);
-
-  std::ofstream out("grid-1.svg");
-  GridOut grid_out;
-  grid_out.write_svg(triangulation,out);
-  std::cout << "wrote the grid to grid-1.svg" << std::endl;
 }
 
 
 template <int dim>
 void Maxwell<dim>::setup_dofs()
 {
-    // idk if i need these?
-    //A_preconditioner.reset();
+    // make sure system is clear
     system_matrix.clear();
     unconstrained_mass_matrix.clear();
     unconstrained_system_matrix.clear();
@@ -295,14 +286,11 @@ void Maxwell<dim>::setup_dofs()
 
     dof_handler.distribute_dofs(fe);
 
-    //DoFRenumbering::Cuthill_McKee(dof_handler);
-
     // group together the velocity components 
     // separate from the lagrange multiplier
     std::vector<unsigned int> block_component(dim + 1, 0);
     block_component[dim] = 1;
 
-    //DoFRenumbering::component_wise(dof_handler, block_component);
     DoFRenumbering::component_wise(dof_handler);
 
     std::vector<types::global_dof_index> dofs_per_component(
@@ -315,9 +303,9 @@ void Maxwell<dim>::setup_dofs()
     const unsigned int n_h = dofs_per_component[0];
     const unsigned int n_q = dofs_per_component[dim];
 
+    // it is overkill to use exact solution here
     ExactSolution<dim> exact_solution;
     exact_solution.set_time(current_time);
-
 
     {
       constraints.clear();
@@ -333,7 +321,7 @@ void Maxwell<dim>::setup_dofs()
           StaticMappingQ1<dim>::mapping);
   
       FEValuesExtractors::Scalar q(dim);
-      //DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+      // Lagrange multiplier boundary conditions
       VectorTools::interpolate_boundary_values(dof_handler,
                                                0,
                                                exact_solution,
@@ -344,6 +332,7 @@ void Maxwell<dim>::setup_dofs()
 
     constraints.close();
 
+    // setup sparsity patterns using constraints
     {
         BlockDynamicSparsityPattern dsp(2, 2);
         dsp.block(0, 0).reinit(n_h, n_h);
@@ -438,12 +427,10 @@ void Maxwell<dim>::setup_dofs()
     current_solution.block(1).reinit(n_q);
     current_solution.collect_sizes();
     
-    
     system_rhs.reinit(2);
     system_rhs.block(0).reinit(n_h);
     system_rhs.block(1).reinit(n_q);
     system_rhs.collect_sizes();
-    
 
     load_vector.reinit(2);
     load_vector.block(0).reinit(n_h);
@@ -474,8 +461,6 @@ void Maxwell<dim>::assemble_system()
                             quadrature_formula,
                             update_values | update_quadrature_points |
                             update_gradients | update_JxW_values);
-
-    //FEValuesViews::Vector<dim> fe_views(fe_values, 0);
 
     const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
     const unsigned int n_q_points = quadrature_formula.size();
@@ -552,7 +537,6 @@ void Maxwell<dim>::assemble_system()
       cell_system_matrix *= time_step;
       cell_system_matrix.add(1.0, cell_mass_matrix);
 
-      // set up the three matrices we care about.
       cell->get_dof_indices(local_dof_indices);
 
       constraints.distribute_local_to_global(
@@ -626,37 +610,6 @@ void Maxwell<dim>::run()
                   InverseMatrix<SparseMatrix<double>,
                   PreconditionSSOR<SparseMatrix<double>> > >
               S_inv(schur_comp, preconditioner_S);
-    /*
-    const auto op_A = linear_operator(A);
-    const auto op_B = linear_operator(B);
-    
-    // solve A inverse to define schur complement
-    ReductionControl reduction_control_A(2000, 1.0e-18, 1.0e-10);
-    SolverGMRES<Vector<double>> solver_A(reduction_control_A);
-    const auto op_A_inv = inverse_operator(op_A, solver_A, preconditioner_A);
-
-    const auto op_S = op_B * op_A_inv * transpose_operator(op_B);
-
-    PreconditionSSOR<SparseMatrix<double>> preconditioner_S;
-    preconditioner_S.initialize(preconditioner_matrix.block(1,1)); 
-
-    const auto op_aS =
-        op_B * linear_operator(preconditioner_A) * transpose_operator(op_B);
-
-    // now precondition S to solve system
-    IterationNumberControl iteration_number_control_aS(30, 1.0e-18);
-    SolverGMRES<Vector<double>> solver_aS(iteration_number_control_aS);
-    const auto preconditioner_S = 
-        inverse_operator(op_aS, solver_aS, PreconditionIdentity());
-
-
-
-    SolverControl solver_control_S(2000, 1.0e-12);// 1e-6*schur_rhs.l2_norm()
-    SolverGMRES<Vector<double>> solver_S(solver_control_S);
-
-    const auto op_S_inv = inverse_operator(op_S, solver_S, preconditioner_S);
-    */
-
 
     MappingQGeneric<dim> mapping(1);
     ForcingFunction<dim> forcing_function(nu, vel_field);
@@ -695,15 +648,14 @@ void Maxwell<dim>::run()
             StaticMappingQ1<dim>::mapping);
     
         FEValuesExtractors::Scalar q(dim);
-        //DoFTools::make_hanging_node_constraints(dof_handler, constraints);
+
+        // Lagrange multilier boundary condition.
         VectorTools::interpolate_boundary_values(dof_handler,
                                                  0,
                                                  exact_solution,
                                                  constraints,
                                                  fe.component_mask(q));
       }
-
-
       constraints.close();
 
       // Now we want to set up C^T (b - A k)
@@ -716,7 +668,6 @@ void Maxwell<dim>::run()
 
       const auto &F = system_rhs.block(0);
 
-      tmp = 0;
       // compute schur_rhs
       A_inv.vmult(tmp, F);
       B.vmult(schur_rhs, tmp);
@@ -726,10 +677,6 @@ void Maxwell<dim>::run()
       S_inv.vmult(current_solution.block(1), schur_rhs);
       constraints.distribute(current_solution);
 
-      // set q = 0
-      //current_solution.block(1) = 0;
-
-      tmp = 0;
       // compute second system rhs
       B_T.vmult(tmp, current_solution.block(1));
       tmp *= -1;
@@ -737,34 +684,10 @@ void Maxwell<dim>::run()
 
       // solve for h
       A_inv.vmult(current_solution.block(0), tmp);
-
-      //SparseDirectUMFPACK lu_solver;
-      //lu_solver.factorize(A);
-
-      //lu_solver.vmult(current_solution.block(0), F);
-
       constraints.distribute(current_solution);
-
-      /*
-      const auto schur_rhs = op_B * op_A_inv * F;
-
-      solver_S.solve(op_S, current_solution.block(1), schur_rhs, preconditioner_S);
-
-      constraints.distribute(current_solution);
-
-      op_A_inv.vmult(
-              current_solution.block(0), 
-              F - transpose_operator(op_B)*current_solution.block(1));
-
-      constraints.distribute(current_solution);
-      */
   }
 
-    //q = op_S_inv * schur_rhs;
-    //h = op_M_inv * (F - transpose_operator(op_B) * q);
-
   output_results();
-
 }
 
 template <int dim>
