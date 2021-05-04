@@ -31,6 +31,7 @@
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_gmres.h>
 #include <deal.II/lac/sparse_direct.h>
+#include <deal.II/lac/sparse_ilu.h>
 #include <deal.II/lac/sparse_matrix.h>
 #include <deal.II/lac/vector.h>
 
@@ -45,13 +46,71 @@
 
 using namespace dealii;
 
+template<int dim>
+class MagneticField
+{
+    public:
+        MagneticField() {}
+
+        Tensor<1, dim> get_force(const Tensor<1,dim> &p) const
+        {
+            (void)p;
+            Tensor<1, dim> val;
+            val[0] = 0.0;
+            val[1] = 0.0;
+            return val;
+        }
+
+};
+
+template<int dim>
+class ExactVelocity : public Function<dim>
+{
+    public:
+        ExactVelocity()
+            : Function<dim>(dim) // 3
+        {}
+
+        virtual void
+        vector_value(const Point<dim> &p,
+                     Vector<double> &  values) const override
+        {
+            const double time = this->get_time();
+            //const double Um = 1.5;
+            //const double H  = 4.1;
+            //values(0) = 4. * Um * p(1) * (H - p(1)) / (H * H);
+            //values(1) = 0.0;
+            values(0) = time*cos(p(1));
+            values(1) = time*sin(p(0));
+        }
+};
+
+template<int dim>
+class ExactPressure : public Function<dim>
+{
+    public:
+        ExactPressure()
+            : Function<dim>(1) // 3
+        {}
+
+        virtual 
+        double value(const Point<dim> &p, unsigned int component = 0) const override
+        {
+            (void)component;
+            const double time = this->get_time();
+            //return 0.0;
+            return time*p(0)*p(1);
+            //return 25.0 - p(0);
+        }
+};
+
+
 template <int dim>
 class NavierStokes
 {
     public:
         NavierStokes(const unsigned int degree, 
-                const unsigned int n_global_refinements,
-                const Tensor<1, dim> magnetic_field);
+                const unsigned int n_global_refinements);
 
 
         void run();
@@ -59,104 +118,121 @@ class NavierStokes
     private:
         void setup_grid();
         void setup_dofs();
-        void assemble_system();
-        void output_results() const;
+        void assemble_matrices();
+        void initialize_system();
+        void diffusion_step();
+        void projection_step();
+        void pressure_step();
+        void assemble_advection_matrix();
+        void output_results();
 
         const unsigned int degree;
         unsigned int n_global_refinements;
 
-        double time_step;
+        double dt;
         double end_time;
         double current_time;
         int    time_step_number;
 
-        double nu;
+        double eta;
         double mu;
         double rho;
-        double gamma;
 
-        Tensor<1, dim> mag_field;
+        bool standard;
+        MagneticField<dim> mag_field;
 
         Triangulation<dim> triangulation;
-        FESystem<dim>      fe;
-        DoFHandler<dim>    dof_handler;
+        FESystem<dim>      fe_u;
+        FE_Q<dim>          fe_p;
+        DoFHandler<dim>    dof_handler_u;
+        DoFHandler<dim>    dof_handler_p;
 
-        AffineConstraints<double> constraints;
+        AffineConstraints<double> u_constraints;
+        AffineConstraints<double> p_constraints;
 
-        BlockSparsityPattern      sparsity_pattern;
-        BlockSparsityPattern      unconstrained_sparsity_pattern;
-        BlockSparseMatrix<double> system_matrix;
-        //BlockSparseMatrix<double> mass_matrix;
+        SparsityPattern      sparsity_pattern_u;
+        SparsityPattern      sparsity_pattern_p;
+        SparsityPattern      sparsity_pattern_g;
 
-        BlockSparseMatrix<double> unconstrained_system_matrix;
-        BlockSparseMatrix<double> unconstrained_mass_matrix;
+        SparseMatrix<double> laplace_matrix_u;
+        SparseMatrix<double> laplace_matrix_p;
 
-        BlockSparsityPattern      preconditioner_sparsity_pattern;
-        BlockSparseMatrix<double> preconditioner_matrix;
+        SparseMatrix<double> mass_matrix_u;
+        SparseMatrix<double> mass_matrix_p;
 
-        BlockVector<double> current_solution;
-        BlockVector<double> previous_solution;
-        BlockVector<double> system_rhs;
-        BlockVector<double> load_vector;
+        SparseMatrix<double> advection_matrix;
+        SparseMatrix<double> gradient_matrix;
 
-        // maybe BlockSchurPreconditioner instead
-        //std::shared_ptr< SparseDirectUMFPACK > A_preconditioner;
-};
+        SparseMatrix<double> velocity_step_matrix_const;
+        SparseMatrix<double> velocity_step_matrix;
+        SparseMatrix<double> pressure_step_matrix;
 
-template<int dim>
-class ExactSolution : public Function<dim>
-{
-    public:
-        ExactSolution() 
-            : Function<dim>(dim+1) // 3
-        {}
+        Vector<double> diffusion_rhs;
+        Vector<double> projection_rhs;
 
-        virtual void 
-        vector_value(const Point<dim> &p, 
-                     Vector<double> &  values) const override
-        {
-            const double time = this->get_time();
-            values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
-            values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
-            values(2) = 0;
-        }
+        Vector<double> prev_u;
+        Vector<double> curr_u;
+        Vector<double> prev_p;
+        Vector<double> curr_p;
+        Vector<double> prev_phi;
+        Vector<double> curr_phi;
+
+        Vector<double> u_star;
+        Vector<double> p_star;
+
+        SparseDirectUMFPACK pressure_mass_inv;
+        SparseDirectUMFPACK pressure_laplace_inv;
+        SparseILU<double>   diffusion_preconditioner;
+        SparseILU<double>   projection_preconditioner;
+
+        ExactVelocity<dim> exact_u;
+        ExactPressure<dim> exact_p;
 };
 
 template <int dim>
 class ForcingFunction : public Function<dim>
 {
     public:
-        ForcingFunction()
-            : Function<dim>(dim+1) // 3
+        ForcingFunction(double eta, double mu, MagneticField<dim> &m_field)
+            : Function<dim>(dim)
+            , eta(eta)
+            , mu(mu)
+            , m_field(m_field)// 3
         {}
 
-        virtual void 
-        vector_value(const Point<dim> &p, 
+        virtual void
+        vector_value(const Point<dim> &p,
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            values(0) = (1+time*(1+p(0)*p(0)-p(0)))*cos(p(0)*p(1)) - (p(1)+1)*time*p(0)*sin(p(0)*p(1));
-            values(1) = (1+time*(-1+p(1)*p(1)+p(1)))*sin(p(0)*p(1)) - (p(0)-1)*time*p(1)*cos(p(0)*p(1));
-            values(2) = 0;
+            //(void)p;
+            values(0) = mu*time*cos(p(1)) - time*time*sin(p(0))*sin(p(1)) +
+                        time*p(1) + cos(p(1));
+            values(1) = mu*time*sin(p(0)) + time*time*cos(p(0))*cos(p(1)) +
+                        time*p(0) + sin(p(0));
         }
+    private:
+        double eta;
+        double mu;
+        MagneticField<dim> &m_field;
 };
 
 template <int dim>
 NavierStokes<dim>::NavierStokes(const unsigned int degree,
-                                const unsigned int n_global_refinements,
-                                const Tensor<1, dim> magnetic_field)
+                                const unsigned int n_global_refinements)
     : degree(degree)
     , n_global_refinements(n_global_refinements)
-    , time_step(std::pow(0.1, n_global_refinements))
+    , dt(std::pow(0.1, n_global_refinements))
     , current_time(0.0)
-    , time_step_number(1)
-    , nu(1.0)
+    , time_step_number(3)
+    , eta(0.1)
     , mu(1.0)
     , rho(1.0)
-    , gamma(1.0)
-    , mag_field(magnetic_field)
-    , fe(FE_Q<dim>(degree+1), dim, FE_Q<dim>(degree), 1)
-    , dof_handler(triangulation)
+    , standard(false)
+    , fe_u(FE_Q<dim>(degree+1), dim)
+    , fe_p(degree)
+    , dof_handler_u(triangulation)
+    , dof_handler_p(triangulation)
 {}
 
 template <int dim>
@@ -177,278 +253,404 @@ NavierStokes<dim>::setup_grid()
   //                                    rotation_matrix);
 
   triangulation.refine_global(n_global_refinements);
-
-  std::ofstream out("grid-1.svg");
-  GridOut grid_out;
-  grid_out.write_svg(triangulation,out);
-  std::cout << "wrote the grid to grid-1.svg" << std::endl;
+  double dx = GridTools::minimal_cell_diameter(triangulation);
+  dt = dx;
 }
 
 
 template <int dim>
 void NavierStokes<dim>::setup_dofs()
 {
-    // idk if i need these?
-    //A_preconditioner.reset();
-    system_matrix.clear();
-    unconstrained_mass_matrix.clear();
-    unconstrained_system_matrix.clear();
-    preconditioner_matrix.clear();
+    laplace_matrix_u.clear();
+    laplace_matrix_p.clear();
+    mass_matrix_u.clear();
+    mass_matrix_p.clear();
+    advection_matrix.clear();
+    gradient_matrix.clear();
 
-    dof_handler.distribute_dofs(fe);
+    dof_handler_u.distribute_dofs(fe_u);
+    DoFRenumbering::Cuthill_McKee(dof_handler_u);
 
-    //DoFRenumbering::Cuthill_McKee(dof_handler);
+    dof_handler_p.distribute_dofs(fe_p);
+    DoFRenumbering::Cuthill_McKee(dof_handler_p);
 
-    // group together the velocity components 
-    // separate from the lagrange multiplier
-    std::vector<unsigned int> block_component(dim + 1, 0);
-    block_component[dim] = 1;
-
-    //DoFRenumbering::component_wise(dof_handler, block_component);
-    DoFRenumbering::component_wise(dof_handler);
-
-    std::vector<types::global_dof_index> dofs_per_component(
-            dim+1, types::global_dof_index(0));
-
-    DoFTools::count_dofs_per_component(dof_handler,
-                                       dofs_per_component, 
-                                       true); // this means there will be no dublicates
-
-    const unsigned int n_u = dofs_per_component[0];
-    const unsigned int n_p = dofs_per_component[dim];
-
-    ExactSolution<dim> exact_solution;
-    exact_solution.set_time(current_time);
-
-    // FE_Nedelec boundary condition.
-    VectorTools::project_boundary_values_curl_conforming_l2(
-        dof_handler,
-        0,
-        exact_solution,
-        0,
-        constraints,
-        StaticMappingQ1<dim>::mapping);
-
-    constraints.close();
-
-    //const std::vector<types::global_dof_index> dofs_per_block =
-    //  DoFTools::count_dofs_per_fe_block(dof_handler, block_component);
+    prev_u.reinit(dof_handler_u.n_dofs());
+    prev_p.reinit(dof_handler_p.n_dofs());
+    prev_phi.reinit(dof_handler_p.n_dofs());
     
-    //std::vector<types::global_dof_index> dofs_per_block;
-    //DoFTools::count_dofs_per_block(dof_handler, 
-    //                               dofs_per_block,
-    //                               block_component);
+    curr_u.reinit(dof_handler_u.n_dofs());
+    curr_p.reinit(dof_handler_p.n_dofs());
+    curr_phi.reinit(dof_handler_p.n_dofs());
 
-    {
-        BlockDynamicSparsityPattern dsp(2, 2);
-        dsp.block(0, 0).reinit(n_u, n_u);
-        dsp.block(1, 0).reinit(n_p, n_u);
-        dsp.block(0, 1).reinit(n_u, n_p);
-        dsp.block(1, 1).reinit(n_p, n_p);
+    u_star.reinit(dof_handler_u.n_dofs());
+    p_star.reinit(dof_handler_p.n_dofs());
 
-        dsp.collect_sizes();
+    diffusion_rhs.reinit(dof_handler_u.n_dofs());
+    projection_rhs.reinit(dof_handler_p.n_dofs());
 
-        Table<2, DoFTools::Coupling> coupling(dim + 1, dim + 1);
+    // overkill to use exact solution here
+    exact_u.set_time(current_time);
+    exact_p.set_time(current_time);
 
-        for (unsigned int c = 0; c < dim + 1; ++c)
-          for (unsigned int d = 0; d < dim + 1; ++d)
-            if (!((c == dim) && (d == dim)))
-              coupling[c][d] = DoFTools::always;
-            else
-              coupling[c][d] = DoFTools::none;
+    VectorTools::interpolate_boundary_values(
+            dof_handler_u, 0, exact_u, u_constraints);
+    u_constraints.close();
 
-        DoFTools::make_sparsity_pattern(
-          dof_handler, coupling, dsp, constraints, false);
-
-        sparsity_pattern.copy_from(dsp);
-    }
-    
-    {
-        BlockDynamicSparsityPattern unconstrained_dsp(2, 2);
-        unconstrained_dsp.block(0, 0).reinit(n_u, n_u);
-        unconstrained_dsp.block(1, 0).reinit(n_p, n_u);
-        unconstrained_dsp.block(0, 1).reinit(n_u, n_p);
-        unconstrained_dsp.block(1, 1).reinit(n_p, n_p);
-
-        unconstrained_dsp.collect_sizes();
-
-        Table<2, DoFTools::Coupling> unconstrained_coupling(dim + 1, dim + 1);
-
-        for (unsigned int c = 0; c < dim + 1; ++c)
-          for (unsigned int d = 0; d < dim + 1; ++d)
-            if (!((c == dim) && (d == dim)))
-              unconstrained_coupling[c][d] = DoFTools::always;
-            else
-              unconstrained_coupling[c][d] = DoFTools::none;
-
-        DoFTools::make_sparsity_pattern(dof_handler, 
-                                        unconstrained_coupling, 
-                                        unconstrained_dsp);
-
-        unconstrained_sparsity_pattern.copy_from(unconstrained_dsp);
-    }
-    
-    
-    {
-        BlockDynamicSparsityPattern preconditioner_dsp(2, 2);
-        preconditioner_dsp.block(0, 0).reinit(n_u, n_u);
-        preconditioner_dsp.block(1, 0).reinit(n_p, n_u);
-        preconditioner_dsp.block(0, 1).reinit(n_u, n_p);
-        preconditioner_dsp.block(1, 1).reinit(n_p, n_p);
-
-        preconditioner_dsp.collect_sizes();
-
-        Table<2, DoFTools::Coupling> preconditioner_coupling(dim + 1, dim + 1);
-
-        for (unsigned int c = 0; c < dim + 1; ++c)
-          for (unsigned int d = 0; d < dim + 1; ++d)
-            if (((c == dim) && (d == dim)))
-              preconditioner_coupling[c][d] = DoFTools::always;
-            else
-              preconditioner_coupling[c][d] = DoFTools::none;
-
-        DoFTools::make_sparsity_pattern(dof_handler,
-                                      preconditioner_coupling,
-                                      preconditioner_dsp,
-                                      constraints,
-                                      false);
-
-        preconditioner_sparsity_pattern.copy_from(preconditioner_dsp);
-    }
-    
-
-    system_matrix.reinit(sparsity_pattern);
-    preconditioner_matrix.reinit(preconditioner_sparsity_pattern);
-    unconstrained_mass_matrix.reinit(unconstrained_sparsity_pattern);
-    unconstrained_system_matrix.reinit(unconstrained_sparsity_pattern);
-
-    previous_solution.reinit(2);
-    previous_solution.block(0).reinit(n_u);
-    previous_solution.block(1).reinit(n_p);
-    previous_solution.collect_sizes();
-
-    current_solution.reinit(2);
-    current_solution.block(0).reinit(n_u);
-    current_solution.block(1).reinit(n_p);
-    current_solution.collect_sizes();
-    
-    
-    system_rhs.reinit(2);
-    system_rhs.block(0).reinit(n_u);
-    system_rhs.block(1).reinit(n_p);
-    system_rhs.collect_sizes();
-    
-
-    load_vector.reinit(2);
-    load_vector.block(0).reinit(n_u);
-    load_vector.block(1).reinit(n_p);
-    load_vector.collect_sizes();
-
-    // use exact solution to set up initial condition
-    VectorTools::project(dof_handler,
-                         constraints,
-                         QGauss<dim>(fe.degree + 2),
-                         exact_solution,
-                         current_solution);
-    
+    VectorTools::interpolate_boundary_values(
+            dof_handler_p, 0, exact_p, p_constraints);
+    p_constraints.close();
 }
 
 template <int dim>
-void NavierStokes<dim>::assemble_system()
+void NavierStokes<dim>::assemble_matrices()
 {
-    system_matrix         = 0;
-    preconditioner_matrix = 0;
+    QGauss<dim> qf(degree+2);
+
+    // velocity sparsity pattern
+    DynamicSparsityPattern u_dsp(dof_handler_u.n_dofs());
+    DoFTools::make_sparsity_pattern(dof_handler_u,
+                                    u_dsp,
+                                    u_constraints,
+                                    /* keep_constrained_dofs */ true);
+    sparsity_pattern_u.copy_from(u_dsp);
+
+    // initialize velocity matrices
+    laplace_matrix_u.reinit(sparsity_pattern_u);
+    mass_matrix_u.reinit(sparsity_pattern_u);
+    advection_matrix.reinit(sparsity_pattern_u);
+    velocity_step_matrix_const.reinit(sparsity_pattern_u);
+    velocity_step_matrix.reinit(sparsity_pattern_u);
+
+    MatrixCreator::create_mass_matrix(dof_handler_u,
+                                      qf,
+                                      mass_matrix_u);
+    MatrixCreator::create_laplace_matrix(dof_handler_u,
+                                         qf,
+                                         laplace_matrix_u);
+    velocity_step_matrix_const = 0.0;
+    velocity_step_matrix_const.add(mu, laplace_matrix_u);
+    velocity_step_matrix_const.add(1.5/dt, mass_matrix_u);
+
+    // pressure sparsity pattern
+    DynamicSparsityPattern p_dsp(dof_handler_p.n_dofs());
+    DoFTools::make_sparsity_pattern(dof_handler_p,
+                                    p_dsp,
+                                    p_constraints,
+                                    /* keep_constrained_dofs */ true);
+    sparsity_pattern_p.copy_from(p_dsp);
+
+    // initialize pressure matrices
+    laplace_matrix_p.reinit(sparsity_pattern_p);
+    mass_matrix_p.reinit(sparsity_pattern_p);
+    pressure_step_matrix.reinit(sparsity_pattern_p);
+
+    MatrixCreator::create_mass_matrix(dof_handler_p,
+                                      qf,
+                                      mass_matrix_p);
+    MatrixCreator::create_laplace_matrix(dof_handler_p,
+                                         qf,
+                                         laplace_matrix_p);
+
+    // velocity-pressure sparsity pattern
+    DynamicSparsityPattern g_dsp(dof_handler_u.n_dofs(),
+                                 dof_handler_p.n_dofs());
+    DoFTools::make_sparsity_pattern(dof_handler_u,
+                                    dof_handler_p,
+                                    g_dsp);
+    sparsity_pattern_g.copy_from(g_dsp);
+
+    // initialize gradient operator matrix
+    gradient_matrix.reinit(sparsity_pattern_g);
+
+    FEValues<dim> fe_values_u(fe_u, qf, 
+                              update_gradients | update_JxW_values);
+    FEValues<dim> fe_values_p(fe_p, qf, 
+                              update_values | update_JxW_values);
+
+    FEValuesViews::Vector<dim> fe_views_u(fe_values_u, 0);
+
+    const unsigned int dofs_per_cell_u = fe_u.n_dofs_per_cell();
+    const unsigned int dofs_per_cell_p = fe_p.n_dofs_per_cell();
+    const unsigned int n_q_points = qf.size();
+
+    FullMatrix<double> cell_gradient_matrix(dofs_per_cell_u, dofs_per_cell_p);
+    std::vector<types::global_dof_index> local_dof_indices_u(dofs_per_cell_u);
+    std::vector<types::global_dof_index> local_dof_indices_p(dofs_per_cell_p);
+
+    double div_i, val_j;
+
+    auto cell_u = dof_handler_u.begin_active();
+    const auto cell_end_u = dof_handler_u.end();
+    auto cell_p = dof_handler_p.begin_active();
+    while (cell_u != cell_end_u)
+    {
+      Assert(cell_u->center() == cell_p->center(), 
+             ExcMessage("a real bad thing happened"));
+
+      cell_gradient_matrix = 0;
+
+      fe_values_u.reinit(cell_u);
+      fe_values_p.reinit(cell_p);
+
+      for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
+        {
+          for (unsigned int i = 0; i < dofs_per_cell_u; ++i)
+            {
+              div_i = fe_views_u.divergence(i, q_index);
+
+              for (unsigned int j = 0; j < dofs_per_cell_p; ++j)
+                {
+                  val_j = fe_values_p.shape_value(j, q_index);
+
+                  cell_gradient_matrix(i,j) += 
+                      -fe_values_u.JxW(q_index) * div_i * val_j;
+                }
+            }
+        }
+      cell_u->get_dof_indices(local_dof_indices_u);
+      cell_p->get_dof_indices(local_dof_indices_p);
+      for (unsigned int i = 0; i < dofs_per_cell_u; ++i)
+          for (unsigned int j = 0; j < dofs_per_cell_p; ++j)
+              gradient_matrix.add(local_dof_indices_u[i],
+                                  local_dof_indices_p[j],
+                                  cell_gradient_matrix(i,j));
+
+      ++cell_u;
+      ++cell_p;
+    }
+}
+
+template<int dim>
+void NavierStokes<dim>::initialize_system()
+{
+
+    // use exact solution to set up initial condition
+    VectorTools::interpolate(dof_handler_u,
+                             exact_u,
+                             prev_u);
+    exact_u.advance_time(dt);
+    VectorTools::interpolate(dof_handler_u,
+                             exact_u,
+                             curr_u);
+
+    VectorTools::interpolate(dof_handler_p,
+                             exact_p,
+                             prev_p);
+    exact_p.advance_time(dt);
+    VectorTools::interpolate(dof_handler_p,
+                             exact_p,
+                             curr_p);
+    prev_phi = 0.0;
+    curr_phi = 0.0;
+    curr_phi.add(1.0, curr_p, -1.0, prev_p); // set phi_1 = p_1 - p_0
+
+    // 
+    projection_preconditioner.initialize(laplace_matrix_p);
+    pressure_mass_inv.factorize(mass_matrix_p);
+}
+
+template <int dim>
+void NavierStokes<dim>::assemble_advection_matrix()
+{
+    advection_matrix = 0;
 
     QGauss<dim> quadrature_formula(degree+2);
 
     MappingQGeneric<dim> mapping(1);
     FEValues<dim> fe_values(mapping,
-                            fe,
+                            fe_u,
                             quadrature_formula,
                             update_values | update_quadrature_points |
                             update_gradients | update_JxW_values);
 
-    //FEValuesViews::Vector<dim> fe_views(fe_values, 0);
+    FEValuesViews::Vector<dim> fe_views(fe_values, 0);
 
-    const unsigned int dofs_per_cell = fe.n_dofs_per_cell();
+    const unsigned int dofs_per_cell = fe_u.n_dofs_per_cell();
     const unsigned int n_q_points = quadrature_formula.size();
 
-    FullMatrix<double> cell_mass_matrix(dofs_per_cell, dofs_per_cell);
-    FullMatrix<double> cell_system_matrix(dofs_per_cell, dofs_per_cell);
-    FullMatrix<double> cell_preconditioner_matrix(dofs_per_cell, dofs_per_cell);
-    Vector<double>     cell_rhs(dofs_per_cell);
+    FullMatrix<double>     cell_advection_matrix(dofs_per_cell, dofs_per_cell);
 
-    Tensor<1, dim>              phi_i_u, phi_j_u;
-    Tensor<2, dim>              grad_phi_i_u, grad_phi_j_u;
-    double                      phi_i_p, phi_j_p;
-    double                      div_phi_i_u, div_phi_j_u;
+    //std::vector<Tensor<1,dim>> u_star_values(n_q_points,
+    //                                         Tensor<1,dim,double>);
+    //std::vector<Tensor<1,dim>> u_star_gradients(n_uq_points);
+    std::vector<Tensor<1,dim>> u_star_values(n_q_points);
+    std::vector<Tensor<2,dim>> u_star_gradients(n_q_points);
 
+    Tensor<1, dim>              val_i_u, val_j_u;
+    Tensor<2, dim>              grad_j_u;
+    double                      u_star_div;
 
     std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
 
-    const FEValuesExtractors::Vector u(0);
-    const FEValuesExtractors::Scalar q(dim);
 
-    for (const auto &cell : dof_handler.active_cell_iterators())
+    for (const auto &cell : dof_handler_u.active_cell_iterators())
     {
-      cell_mass_matrix = 0;
-      cell_system_matrix = 0;
-      cell_preconditioner_matrix = 0;
+      cell_advection_matrix = 0;
+
       fe_values.reinit(cell);
 
-      for (unsigned int q_index = 0; q_index < n_q_points;
-             ++q_index)
+      fe_views.get_function_values(u_star, u_star_values);
+      fe_views.get_function_gradients(u_star, u_star_gradients);
+
+      for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
         {
+          u_star_div = 0;
+
+          for ( unsigned int d = 0; d < dim; ++d)
+              u_star_div += u_star_gradients[q_index][d][d];
+
           for (unsigned int i = 0; i < dofs_per_cell; ++i)
             {
-              phi_i_u = fe_values[u].value(i, q_index);
-              phi_i_p = fe_values[p].value(i, q_index);
-              grad_phi_i_u = fe_values[u].gradient(i, q_index);
-              div_phi_i_u  = fe_values[u].divergence(i,q_index);
-
+              val_i_u = fe_views.value(i, q_index);
 
               for (unsigned int j = 0; j < dofs_per_cell; ++j)
                 {
-                  phi_j_u = fe_values[u].value(j, q_index);
-                  phi_j_p = fe_values[p].value(j, q_index);
-                  grad_phi_j_u = fe_values[u].gradient(j, q_index);
-                  div_phi_j_u  = fe_values[u].divergence(j,q_index);
+                  val_j_u = fe_views.value(j, q_index);
+                  grad_j_u = fe_views.gradient(j, q_index);
 
-                  // mass matrix
-                  cell_mass_matrix(i, j) +=
-                        phi_i_u * phi_j_u * 
-                        fe_values.JxW(q_index);
-                  
-                  // pressure mass matrix aka preconditioner
-                  cell_preconditioner_matrix(i, j) +=
-                        phi_i_p * phi_j_p *
-                        fe_values.JxW(q_index);
-
-                  cell_system_matrix(i,j) +=
-                      ( mu * 
-                        scalar_product(grad_phi_i_u, grad_phi_j_u) +
-                       (nu + mu) * div_phi_i_u * div_phi_i_v -
-                        div_phi_i_u * phi_j_p -
-                        phi_i_p * div_phi_j_u ) * fe_values.JxW(q_index);
+                  cell_advection_matrix(i,j) +=
+                      val_i_u * 
+                      ( u_star_values[q_index] * grad_j_u + 
+                        0.5 * u_star_div * val_j_u ) *
+                      fe_values.JxW(q_index);
                 }
             }
         }
 
-      cell_system_matrix *= time_step;
-      cell_system_matrix.add(1.0, cell_mass_matrix);
-
-      // set up the three matrices we care about.
       cell->get_dof_indices(local_dof_indices);
 
-      constraints.distribute_local_to_global(
-        cell_system_matrix, local_dof_indices, system_matrix);
-      constraints.distribute_local_to_global(
-        cell_preconditioner_matrix, local_dof_indices, preconditioner_matrix);
+      u_constraints.distribute_local_to_global(
+        cell_advection_matrix, local_dof_indices, advection_matrix); 
 
-      unconstrained_system_matrix.add(local_dof_indices, cell_system_matrix);
-      unconstrained_mass_matrix.add(local_dof_indices, cell_mass_matrix);
     }
 }
+
+template<int dim>
+void NavierStokes<dim>::diffusion_step()
+{
+    // define u *
+    u_star.equ(2.0, curr_u);
+    u_star -= prev_u;
+
+    // define p #
+    p_star.equ(-1.0, curr_p);
+    p_star.add(-4.0/3.0, curr_phi, 1.0/3.0, prev_phi);
+    //p_star *= -1.0;
+
+    assemble_advection_matrix();
+
+    // define (v, f^k+1)
+    MappingQGeneric<dim> mapping(1);
+    ForcingFunction<dim> forcing_function(eta, mu, mag_field);
+    forcing_function.set_time(current_time + dt);
+    VectorTools::create_right_hand_side(mapping,
+                                        dof_handler_u,
+                                        QGauss<dim>(degree + 2),
+                                        forcing_function,
+                                        diffusion_rhs);
+
+    // add 1/2dt (v, 4uk - uk-1) 
+    Vector<double> tmp(dof_handler_u.n_dofs());
+    tmp.equ(2.0/dt, curr_u);
+    tmp.add(-0.5/dt, prev_u);
+    mass_matrix_u.vmult_add(diffusion_rhs, tmp);
+
+    // add (div v, p #)
+    gradient_matrix.vmult_add(diffusion_rhs, p_star);
+
+    // set u_n-1 = u_n
+    //std::swap(prev_u, curr_u);
+    prev_u = curr_u;
+
+    // define 3/2dt M + A + nu K
+    velocity_step_matrix.copy_from(velocity_step_matrix_const);
+    velocity_step_matrix.add(1.0, advection_matrix);
+
+
+    // boundary conditions
+    exact_u.set_time(current_time+dt);
+    std::map<types::global_dof_index, double> boundary_values_u;
+    VectorTools::interpolate_boundary_values(dof_handler_u,
+                                             0,
+                                             exact_u,
+                                             boundary_values_u);
+    MatrixTools::apply_boundary_values(boundary_values_u,
+                                       velocity_step_matrix,
+                                       curr_u,
+                                       diffusion_rhs);
+
+    // initialize preconditioner
+    diffusion_preconditioner.initialize(velocity_step_matrix);
+
+    // solver
+    SolverControl solver_control(1000, 1e-8*diffusion_rhs.l2_norm());
+    SolverGMRES<Vector<double>> gmres(solver_control);
+    gmres.solve(velocity_step_matrix, curr_u, 
+                diffusion_rhs, diffusion_preconditioner);
+
+    //VectorTools::interpolate(dof_handler_u,
+    //                         exact_u,
+    //                         curr_u);
+
+}
+
+
+template<int dim>
+void NavierStokes<dim>::projection_step()
+{
+    // get laplace matrix
+    pressure_step_matrix.copy_from(laplace_matrix_p);
+
+    projection_rhs = 0.0;
+    // define projection right hand side
+    gradient_matrix.Tvmult_add(projection_rhs, curr_u);
+
+    // iterate phi
+    //std::swap(prev_phi, curr_phi);
+    prev_phi = curr_phi;
+
+    // boundary condition.
+    static std::map<types::global_dof_index, double> boundary_values_phi;
+    
+    if (time_step_number == 3)
+        VectorTools::interpolate_boundary_values(dof_handler_p,
+                                                 0,
+                                                 Functions::ZeroFunction<dim>(),
+                                                 boundary_values_phi);
+    MatrixTools::apply_boundary_values(boundary_values_phi,
+                                       pressure_step_matrix,
+                                       curr_phi,
+                                       projection_rhs);
+
+    // solver
+    SolverControl solver_control(1000, 1e-8*projection_rhs.l2_norm());
+    SolverCG<Vector<double>> cg(solver_control);
+    cg.solve(pressure_step_matrix, curr_phi, 
+             projection_rhs, projection_preconditioner);
+    curr_phi *= 1.5/dt;
+}
+
+
+template<int dim>
+void NavierStokes<dim>::pressure_step()
+{
+
+    // set p_n-1 = p_n
+    //std::swap(prev_p, curr_p);
+    prev_p = curr_p;
+
+    if (standard)
+        curr_p += curr_phi;
+    else
+    {
+        curr_p = projection_rhs;
+        pressure_mass_inv.solve(curr_p);
+        curr_p.sadd(1.0*mu, 1.0, prev_p);
+        curr_p += curr_phi;
+    }
+
+}
+
 
 template <int dim>
 void NavierStokes<dim>::run()
@@ -458,152 +660,155 @@ void NavierStokes<dim>::run()
 
     std::cout << "   Number of active cells:       "
             << triangulation.n_active_cells() << std::endl;
-    std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+    std::cout << "   Number of degrees of freedom: " << dof_handler_u.n_dofs() << " " <<
+         dof_handler_p.n_dofs()
             << '\n'
             << "   Timestep size: "
-            << time_step
+            << dt
             << std::endl;
 
-    assemble_system();
+    assemble_matrices();
+    initialize_system();
 
-    
-    const auto &A = system_matrix.block(0,0);
-    const auto &B = system_matrix.block(1,0);
-
-    const auto op_A = linear_operator(A);
-    const auto op_B = linear_operator(B);
-
-    // solve A inverse to define schur complement
-    ReductionControl reduction_control_A(2000, 1.0e-18, 1.0e-10);
-    SolverGMRES<Vector<double>> solver_A(reduction_control_A);
-
-    PreconditionJacobi<SparseMatrix<double>> preconditioner_A;
-    preconditioner_A.initialize(A);
-
-    const auto op_A_inv = inverse_operator(op_A, solver_A, preconditioner_A);
-
-    const auto op_S = op_B * op_A_inv * transpose_operator(op_B);
-    const auto op_aS =
-        op_B * linear_operator(preconditioner_A) * transpose_operator(op_B);
-
-    // now precondition S to solve system
-    IterationNumberControl iteration_number_control_aS(30, 1.0e-18);
-    SolverGMRES<Vector<double>> solver_aS(iteration_number_control_aS);
-    const auto preconditioner_S = 
-        inverse_operator(op_aS, solver_aS, PreconditionIdentity());
-
-
-    SolverControl solver_control_S(2000, 1.0e-12);// 1e-6*schur_rhs.l2_norm()
-    SolverGMRES<Vector<double>> solver_S(solver_control_S);
-
-    const auto op_S_inv = inverse_operator(op_S, solver_S, preconditioner_S);
-
-
-    MappingQGeneric<dim> mapping(1);
-    ForcingFunction<dim> forcing_function;
-    ExactSolution<dim> exact_solution;
-
-    for (; current_time <= 1; current_time += time_step, ++time_step_number)
+    for (; current_time <= 0.5; current_time += dt, ++time_step_number)
     {
-      // The current solution should be swapped with the previous solution:
-      std::swap(previous_solution, current_solution);
+        exact_u.advance_time(dt);
 
-      // Set up M h^k + dt f^{k + 1}
-      {
-        forcing_function.set_time(current_time + time_step);
-        VectorTools::create_right_hand_side(mapping,
-                                            dof_handler,
-                                            QGauss<dim>(degree + 2),
-                                            forcing_function,
-                                            load_vector);
-        load_vector *= time_step;
-        unconstrained_mass_matrix.vmult_add(load_vector, previous_solution);
-      }
+        diffusion_step();
+        projection_step();
+        pressure_step();
+    }
 
-      // setup constraints for imposing boundary conditions
-      constraints.clear();
-      exact_solution.set_time(current_time + time_step);
-      // FE_Nedelec boundary condition.
-      VectorTools::project_boundary_values_curl_conforming_l2(
-        dof_handler,
-        0,
-        exact_solution,
-        0,
-        constraints,
-        StaticMappingQ1<dim>::mapping);
-      constraints.close();
 
-      // Now we want to set up C^T (b - A k)
-
-      auto u_system_operator = block_operator(unconstrained_system_matrix);
-      auto setup_constrained_rhs = constrained_right_hand_side(
-          constraints, u_system_operator, load_vector);
-
-      setup_constrained_rhs.apply(system_rhs);  
-
-      const auto &F = system_rhs.block(0);
-
-      const auto schur_rhs = op_B * op_A_inv * F;
-
-      solver_S.solve(op_S, current_solution.block(1), schur_rhs, preconditioner_S);
-
-      constraints.distribute(current_solution);
-
-      op_A_inv.vmult(
-              current_solution.block(0), 
-              F - transpose_operator(op_B)*current_solution.block(1));
-
-      constraints.distribute(current_solution);
-  }
-
-    //q = op_S_inv * schur_rhs;
-    //h = op_M_inv * (F - transpose_operator(op_B) * q);
+    std::cout << std::endl;
 
   output_results();
 
 }
 
 template <int dim>
-void NavierStokes<dim>::output_results() const
+void NavierStokes<dim>::output_results() 
 {
-    std::vector<std::string> solution_names(dim, "magnetic_field");
-    solution_names.emplace_back("lagrange_multiplier");
-
-    std::vector<DataComponentInterpretation::DataComponentInterpretation>
-        data_component_interpretation(
-           dim, DataComponentInterpretation::component_is_part_of_vector); 
-    data_component_interpretation.push_back(
-           DataComponentInterpretation::component_is_scalar);
-
     // Compute the pointwise maximum error:
-    Vector<double> max_error_per_cell(triangulation.n_active_cells());
+    Vector<double> max_error_per_cell_u(triangulation.n_active_cells());
     {
-        ExactSolution<dim> exact_solution;
-        exact_solution.set_time(current_time);
+        exact_u.set_time(current_time);
 
         MappingQGeneric<dim> mapping(1);
         VectorTools::integrate_difference(mapping,
-                                          dof_handler,
-                                          current_solution,
-                                          exact_solution,
-                                          max_error_per_cell,
+                                          dof_handler_u,
+                                          curr_u,
+                                          exact_u,
+                                          max_error_per_cell_u,
                                           QIterated<dim>(QGauss<1>(2), 2),
-                                          VectorTools::NormType::Linfty_norm);
-        std::cout << "maximum error = "
-                  << *std::max_element(max_error_per_cell.begin(),
-                                       max_error_per_cell.end())
+                                          VectorTools::NormType::L2_norm);
+                                          //VectorTools::NormType::Linfty_norm);
+        std::cout << "\t\t\t\tmaximum u error = "
+                  << *std::max_element(max_error_per_cell_u.begin(),
+                                       max_error_per_cell_u.end())
                   << std::endl;
     }
+    Vector<double> max_error_per_cell_p(triangulation.n_active_cells());
+    {
+        exact_p.set_time(current_time);
+
+        MappingQGeneric<dim> mapping(1);
+        VectorTools::integrate_difference(mapping,
+                                          dof_handler_p,
+                                          curr_p,
+                                          exact_p,
+                                          max_error_per_cell_p,
+                                          QIterated<dim>(QGauss<1>(2), 2),
+                                          VectorTools::NormType::L2_norm);
+                                          //VectorTools::NormType::Linfty_norm);
+        std::cout << "\t\t\t\tmaximum p error = "
+                  << *std::max_element(max_error_per_cell_p.begin(),
+                                       max_error_per_cell_p.end())
+                  << std::endl;
+    }
+
+    // join the two systems
+    const FESystem<dim> joint_fe(fe_u, 1, fe_p, 1);
+    DoFHandler<dim> joint_dof_handler(triangulation);
+    joint_dof_handler.distribute_dofs(joint_fe);
+    Assert(joint_dof_handler.n_dofs() ==
+           ( dof_handler_u.n_dofs() +
+            dof_handler_p.n_dofs()),
+            ExcInternalError());
+
+    Vector<double> joint_solution(joint_dof_handler.n_dofs());
+    std::vector<types::global_dof_index> 
+      loc_joint_dof_indices(joint_fe.n_dofs_per_cell()),
+      loc_vel_dof_indices(fe_u.n_dofs_per_cell()),
+      loc_pres_dof_indices(fe_p.n_dofs_per_cell());
+
+    typename DoFHandler<dim>::active_cell_iterator
+      joint_cell = joint_dof_handler.begin_active(),
+      joint_endc = joint_dof_handler.end(),
+      vel_cell   = dof_handler_u.begin_active(),
+      pres_cell  = dof_handler_p.begin_active();
+    for (; joint_cell != joint_endc; ++joint_cell, ++vel_cell, ++pres_cell)
+      {
+        joint_cell->get_dof_indices(loc_joint_dof_indices);
+        vel_cell->get_dof_indices(loc_vel_dof_indices);
+        pres_cell->get_dof_indices(loc_pres_dof_indices);
+        for (unsigned int i = 0; i < joint_fe.n_dofs_per_cell(); ++i)
+            if (joint_fe.system_to_base_index(i).first.first == 0)
+                {
+                    joint_solution(loc_joint_dof_indices[i]) = curr_u(
+                        loc_vel_dof_indices[joint_fe.system_to_base_index(i)
+                                          .second]);
+                }
+              else
+                {
+                    joint_solution(loc_joint_dof_indices[i]) = curr_p(
+                        loc_pres_dof_indices[joint_fe.system_to_base_index(i)
+                                          .second]);
+                }
+      }
+                  
+
+        /*
+        switch (joint_fe.system_to_base_index(i).first.first)
+          {
+            case 0:
+              //Assert(joint_fe.system_to_base_index(i).first.second < dim,
+              //       ExcInternalError());
+              joint_solution(loc_joint_dof_indices[i]) = curr_u(
+                  loc_vel_dof_indices[joint_fe.system_to_base_index(i)
+                                        .second]);
+              break;
+            case 1:
+              Assert(joint_fe.system_to_base_index(i).first.second == 0,
+                     ExcInternalError());
+              joint_solution(loc_joint_dof_indices[i]) = curr_p(
+                  loc_pres_dof_indices[joint_fe.system_to_base_index(i)
+                                              .second]);
+              break;
+            default:
+              Assert(false, ExcInternalError());
+          }
+          */
+    std::vector<std::string> joint_solution_names(dim, "velocity");
+    joint_solution_names.emplace_back("pressure");
 
     // Save the output:
     {
         DataOut<dim> data_out;
-        data_out.attach_dof_handler(dof_handler);
-        data_out.add_data_vector(current_solution, 
-                                 solution_names,
+        data_out.attach_dof_handler(joint_dof_handler);
+
+        std::vector<DataComponentInterpretation::DataComponentInterpretation>
+          component_interpretation(
+            dim + 1, DataComponentInterpretation::component_is_part_of_vector);
+        component_interpretation[dim] =
+          DataComponentInterpretation::component_is_scalar;
+
+        data_out.add_data_vector(joint_solution,
+                                 joint_solution_names,
                                  DataOut<dim>::type_dof_data,
-                                 data_component_interpretation);
-        data_out.add_data_vector(max_error_per_cell, "max_error_per_cell");
+                                 component_interpretation);
+        data_out.add_data_vector(max_error_per_cell_u, "max_error_per_cell_u");
+        data_out.add_data_vector(max_error_per_cell_p, "max_error_per_cell_p");
         data_out.build_patches();
 
         std::ofstream output("output-" + std::to_string(dim) + "d-" +
@@ -616,15 +821,11 @@ void NavierStokes<dim>::output_results() const
 int
 main()
 {
-  int degree = 2;
+  int degree = 1;
 
-  Tensor<1, 2> velocity_field;
-  velocity_field[0] = 1.0;
-  velocity_field[1] = 1.0;
-
-  for (unsigned int i = 1; i < 3; ++i)
+  for (unsigned int i = 0; i < 6; ++i)
     {
-      NavierStokes<2> ns(degree, i, velocity_field);
+      NavierStokes<2> ns(degree, i);
       ns.run();
     }
 
