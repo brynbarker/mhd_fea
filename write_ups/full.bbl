@@ -1,0 +1,54 @@
+\begin{thebibliography}{1}
+
+\bibitem{BMZ}
+Blake Barker, Rafael Monteiro, and Kevin Zumbrun.
+\newblock Transverse bifurcation of viscous slow {MHD} shocks.
+\newblock http://arxiv.org/pdf/1901.09153.pdf.
+
+\bibitem{bryn}
+Bryn Barker.
+\newblock Stability of mhd waves, 2020.
+\newblock Master's Thesis.
+
+\bibitem{gd1}
+Michele Benzi and Maxim Olshanskii.
+\newblock An augmented lagrangian‐based approach to the oseen problem.
+\newblock {\em SIAM Journal of Scientific Computing}, 28(6):2095–2113, 2006.
+
+\bibitem{rotational}
+J~L GUERMOND and JIE SHEN.
+\newblock On the error estimates for the rotational pressure-correction
+  projection methods.
+\newblock {\em MATHEMATICS OF COMPUTATION}, 73(248):1719–1737, December 2003.
+
+\bibitem{gd2}
+Timo Heister.
+\newblock {\em A Massively Parallel Finite Element Framework with Application
+  to Incompressible Flows}.
+\newblock PhD thesis, Georg-August-Universitat Gottingen, 2011.
+
+\bibitem{gd3}
+Timo Heister and Gerd Rapin.
+\newblock Efficient augmented lagrangian-type preconditioning for the oseen
+  problem using grad-div stabilization.
+\newblock {\em INTERNATIONAL JOURNAL FOR NUMERICAL METHODS IN FLUIDS},
+  71:118–134, 2013.
+
+\bibitem{ASThesis}
+Andreas Schafelner.
+\newblock Introduction to magnetohydrodynamics., 2016.
+\newblock Bachelor's Thesis.
+
+\bibitem{projection}
+Jie Shen.
+\newblock Projection methods for time-dependent navier-stokes equations.
+\newblock {\em Appl. Math. Lett}, 5(1):35--37, 1992.
+
+\bibitem{timmerman}
+L~J~I TIMMERMANS, P~D MINEV, and F~N VAN~DE VOSSE.
+\newblock An approximate projection scheme for incompressible flow using
+  spectral elements.
+\newblock {\em INTERNATIONAL JOURNAL FOR NUMERICAL METHODS IN FLUIDS},
+  22:673--688, May 1996.
+
+\end{thebibliography}

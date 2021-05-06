@@ -1,0 +1,5 @@
+changed iters and norm
+changed current_phi
+
+mu = 1
+

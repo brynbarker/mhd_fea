@@ -1,0 +1,37 @@
+\begin{thebibliography}{1}
+
+\bibitem{BMZ}
+Blake Barker, Rafael Monteiro, and Kevin Zumbrun.
+\newblock Transverse bifurcation of viscous slow {MHD} shocks.
+\newblock http://arxiv.org/pdf/1901.09153.pdf.
+
+\bibitem{Ba}
+G.~K. Batchelor.
+\newblock {\em An introduction to fluid dynamics}.
+\newblock Cambridge Mathematical Library. Cambridge University Press,
+  Cambridge, paperback edition, 1999.
+
+\bibitem{C}
+H.~Cabannes.
+\newblock {\em {Theoretical magnetofluiddynamics}}.
+\newblock Academic Press, New York, 1970.
+
+\bibitem{Da}
+Constantine~M Dafermos.
+\newblock Hyperbolic conservation laws in continuum physics, volume 325 of
+  {G}rundlehren der mathematischen wissenschaften [{F}undamental principles of
+  mathematical sciences], 2010.
+
+\bibitem{J}
+Alan Jeffrey.
+\newblock {\em Magnetohydrodynamics}.
+\newblock University Mathematical Texts, No. 33. Oliver \& Boyd, Edinburgh,
+  1966.
+
+\bibitem{Kaw}
+Shuichi Kawashima.
+\newblock {\em Systems of a hyperbolic--parabolic composite type, with
+  applications to the equations of magnetohydrodynamics}.
+\newblock PhD thesis, Kyoto University, 1983.
+
+\end{thebibliography}

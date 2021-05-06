@@ -14,10 +14,33 @@
 
 \begin{document}
 
-\title{Milestone 1}
+\title{Milestone 2}
 \author{Bryn Barker}
 
 \maketitle
+
+\section*{Some Notes}
+Here are some identities and definitions / equations that might be useful. 
+\[
+\nabla \cdot (u \otimes u) = (\nabla \cdot u)u+(u\cdot \nabla)u.
+\]
+
+Convective form of Navier-Stokes (equivalent to conservation form in thesis).
+\[
+\rho \left( \frac{\partial u}{\partial t} + u \cdot \nabla u \right) = -\nabla p + \mu \nabla ^2u + \nu \nabla (\nabla \cdot u) + f,
+\]
+where $f$ is the Lorenz force from the Maxwell's equations. 
+
+Note also that 
+\[
+u\cdot \nabla u = (\nabla \times u)\times u+ \frac{1}{2} \nabla u^2,
+\]
+where $(\nabla \times u)\times u$ is also known as the Lamb vector (vorticity cross velocity).
+
+Another identity
+\[
+\nabla \cdot (A \otimes B) = A(\nabla \cdot B) + (B \cdot \nabla ) A.
+\]
 
 \section*{Maxwell's Equations}
 The Maxwell's equations relevant to MHD are given by
