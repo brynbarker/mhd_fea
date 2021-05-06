@@ -76,10 +76,6 @@ class ExactVelocity : public Function<dim>
                      Vector<double> &  values) const override
         {
             const double time = this->get_time();
-            //const double Um = 1.5;
-            //const double H  = 4.1;
-            //values(0) = 4. * Um * p(1) * (H - p(1)) / (H * H);
-            //values(1) = 0.0;
             values(0) = time*cos(p(1));
             values(1) = time*sin(p(0));
         }
@@ -98,9 +94,7 @@ class ExactPressure : public Function<dim>
         {
             (void)component;
             const double time = this->get_time();
-            //return 0.0;
             return time*p(0)*p(1);
-            //return 25.0 - p(0);
         }
 };
 
@@ -181,6 +175,7 @@ class NavierStokes
         Vector<double> p_star;
 
         SparseDirectUMFPACK pressure_mass_inv;
+        SparseDirectUMFPACK pressure_velocity_inv;
         SparseDirectUMFPACK pressure_laplace_inv;
         SparseILU<double>   diffusion_preconditioner;
         SparseILU<double>   projection_preconditioner;
@@ -240,17 +235,6 @@ void
 NavierStokes<dim>::setup_grid()
 {
   GridGenerator::hyper_cube(triangulation);
-
-  //std::vector<GridTools::PeriodicFacePair<
-  //    typename parallel::distributed::Triangulation<dim>::cell_iterator>>
-  //    periodicity_vector;
-  //GridTools::collect_periodic_faces(triangulation,
-  //                                   2,
-  //                                    3,
-  //                                    1,
-  //                                    periodicity_vector,
-  //                                    Tensor<1, dim>(),
-  //                                    rotation_matrix);
 
   triangulation.refine_global(n_global_refinements);
   double dx = GridTools::minimal_cell_diameter(triangulation);
@@ -379,6 +363,7 @@ void NavierStokes<dim>::assemble_matrices()
 
     double div_i, val_j;
 
+    gradient_matrix = 0.0;
     auto cell_u = dof_handler_u.begin_active();
     const auto cell_end_u = dof_handler_u.end();
     auto cell_p = dof_handler_p.begin_active();
@@ -447,6 +432,7 @@ void NavierStokes<dim>::initialize_system()
     // 
     projection_preconditioner.initialize(laplace_matrix_p);
     pressure_mass_inv.factorize(mass_matrix_p);
+    pressure_velocity_inv.factorize(mass_matrix_u);
 }
 
 template <int dim>
@@ -470,9 +456,6 @@ void NavierStokes<dim>::assemble_advection_matrix()
 
     FullMatrix<double>     cell_advection_matrix(dofs_per_cell, dofs_per_cell);
 
-    //std::vector<Tensor<1,dim>> u_star_values(n_q_points,
-    //                                         Tensor<1,dim,double>);
-    //std::vector<Tensor<1,dim>> u_star_gradients(n_uq_points);
     std::vector<Tensor<1,dim>> u_star_values(n_q_points);
     std::vector<Tensor<2,dim>> u_star_gradients(n_q_points);
 
@@ -623,7 +606,7 @@ void NavierStokes<dim>::projection_step()
                                        projection_rhs);
 
     // solver
-    SolverControl solver_control(1000, 1e-8*projection_rhs.l2_norm());
+    SolverControl solver_control(2000, 1e-8*projection_rhs.l2_norm());
     SolverCG<Vector<double>> cg(solver_control);
     cg.solve(pressure_step_matrix, curr_phi, 
              projection_rhs, projection_preconditioner);
@@ -648,6 +631,15 @@ void NavierStokes<dim>::pressure_step()
         curr_p.sadd(1.0*mu, 1.0, prev_p);
         curr_p += curr_phi;
     }
+
+    // correct u
+    Vector<double> tmp1(dof_handler_u.n_dofs());
+    Vector<double> tmp2(dof_handler_u.n_dofs());
+    tmp1 = 0.0;
+    tmp2 = 0.0;
+    gradient_matrix.vmult(tmp1, curr_phi);
+    pressure_velocity_inv.vmult(tmp2, tmp1);
+    curr_u.add(-2.0*dt/3.0, tmp2);
 
 }
 
@@ -767,28 +759,6 @@ void NavierStokes<dim>::output_results()
                 }
       }
                   
-
-        /*
-        switch (joint_fe.system_to_base_index(i).first.first)
-          {
-            case 0:
-              //Assert(joint_fe.system_to_base_index(i).first.second < dim,
-              //       ExcInternalError());
-              joint_solution(loc_joint_dof_indices[i]) = curr_u(
-                  loc_vel_dof_indices[joint_fe.system_to_base_index(i)
-                                        .second]);
-              break;
-            case 1:
-              Assert(joint_fe.system_to_base_index(i).first.second == 0,
-                     ExcInternalError());
-              joint_solution(loc_joint_dof_indices[i]) = curr_p(
-                  loc_pres_dof_indices[joint_fe.system_to_base_index(i)
-                                              .second]);
-              break;
-            default:
-              Assert(false, ExcInternalError());
-          }
-          */
     std::vector<std::string> joint_solution_names(dim, "velocity");
     joint_solution_names.emplace_back("pressure");
 
@@ -811,7 +781,7 @@ void NavierStokes<dim>::output_results()
         data_out.add_data_vector(max_error_per_cell_p, "max_error_per_cell_p");
         data_out.build_patches();
 
-        std::ofstream output("output-" + std::to_string(dim) + "d-" +
+        std::ofstream output("linear_output-" + std::to_string(dim) + "d-" +
                              std::to_string(n_global_refinements) + ".vtu");
         data_out.write_vtu(output);
     }
@@ -823,7 +793,7 @@ main()
 {
   int degree = 1;
 
-  for (unsigned int i = 0; i < 6; ++i)
+  for (unsigned int i = 0; i < 8; ++i)
     {
       NavierStokes<2> ns(degree, i);
       ns.run();

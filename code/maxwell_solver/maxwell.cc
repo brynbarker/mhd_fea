@@ -259,17 +259,6 @@ Maxwell<dim>::setup_grid()
 {
   GridGenerator::hyper_cube(triangulation);
 
-  //std::vector<GridTools::PeriodicFacePair<
-  //    typename parallel::distributed::Triangulation<dim>::cell_iterator>>
-  //    periodicity_vector;
-  //GridTools::collect_periodic_faces(triangulation,
-  //                                   2,
-  //                                    3,
-  //                                    1,
-  //                                    periodicity_vector,
-  //                                    Tensor<1, dim>(),
-  //                                    rotation_matrix);
-
   triangulation.refine_global(n_global_refinements);
 }
 
@@ -577,16 +566,6 @@ void Maxwell<dim>::run()
     SparseDirectUMFPACK A_inv;
     A_inv.factorize(A);
     
-/*
-    // inner preconditioning
-    PreconditionSSOR<SparseMatrix<double>> preconditioner_A;
-    preconditioner_A.initialize(A); 
-
-    // store block A inverse operator
-    InverseMatrix<SparseMatrix<double>,
-                        PreconditionSSOR<SparseMatrix<double> > >
-              A_inv(A, preconditioner_A);
-*/
     PreconditionSSOR<SparseMatrix<double>> preconditioner_M;
     preconditioner_M.initialize(mass_p_matrix); 
 
@@ -596,16 +575,8 @@ void Maxwell<dim>::run()
                   PreconditionSSOR<SparseMatrix<double>> > 
             preconditioner_S(mass_p_matrix, preconditioner_M);
 
-//  SchurComplement<PreconditionSSOR<SparseMatrix<double>> > schur_comp(system_matrix, A_inv);
     SchurComplement<SparseDirectUMFPACK> schur_comp(system_matrix, A_inv);
 
-    // store schur complement inverse solver
-    //InverseSchur<>
-//  InverseMatrix<SchurComplement<PreconditionSSOR<SparseMatrix<double>> >,
-//                InverseMatrix<SparseMatrix<double>,
-//                PreconditionSSOR<SparseMatrix<double>> > >
-//            S_inv(schur_comp, preconditioner_S);
-    
     InverseMatrix<SchurComplement<SparseDirectUMFPACK>,
                   InverseMatrix<SparseMatrix<double>,
                   PreconditionSSOR<SparseMatrix<double>> > >
@@ -738,7 +709,7 @@ void Maxwell<dim>::output_results() const
         data_out.add_data_vector(max_error_per_cell, "max_error_per_cell");
         data_out.build_patches();
 
-        std::ofstream output("output-" + std::to_string(dim) + "d-" +
+        std::ofstream output("maxwell_output-" + std::to_string(dim) + "d-" +
                              std::to_string(n_global_refinements) + ".vtu");
         data_out.write_vtu(output);
     }
@@ -754,7 +725,7 @@ main()
   velocity_field[0] = 1.0;
   velocity_field[1] = 1.0;
 
-  for (unsigned int i = 0; i < 4; ++i)
+  for (unsigned int i = 0; i < 6; ++i)
     {
       Maxwell<2> maxwell(degree, i, velocity_field);
       maxwell.run();
